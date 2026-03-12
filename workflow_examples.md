@@ -1,106 +1,122 @@
 # Agentic Workflow Examples
 
-These are candidate workflows for the project. A good workflow for our purposes has:
-- Multiple tool calls where later calls are chosen *based on* earlier results (branching, not just chaining)
+These are the workflows we use for evaluation. All tool calls map to simulator endpoints backed by two real data sources:
+- **yfinance** — minute-by-minute stock prices and historical data → `/price`, `/trend`
+- **meteostat** — hourly weather data → `/weather`
+- **simulated** — news sentiment (no clean real-time source) → `/news_sentiment`
+
+A good workflow for our purposes has:
+- Genuine branching: later tool calls are chosen *based on* earlier results, not just chained
 - A final answer that requires synthesizing several pieces of information
 - Tool calls with clearly different change rates, so workflow-aware TTL has something to exploit
 
 ---
 
-## Finance / Stock
+## Change Rate Reference
 
-### Portfolio Rebalancing Agent
-**Shape:** parallel fan-in → aggregation → decision
-
-```
-get_price(AAPL)  ──┐
-get_price(GOOG)  ──┼──→  get_risk_metric(portfolio)  →  decide: rebalance or hold
-get_price(MSFT)  ──┘
-                         (also uses: get_sector_trend(tech))
-```
-
-**Why it's interesting:** Staleness in any one price call corrupts the risk metric, which corrupts the final rebalancing decision. Multiple levels of dependency. The sector trend changes slowly (loose TTL is fine); the individual prices change fast (tight TTL needed).
+| Endpoint | Rate | Roughly |
+|---|---|---|
+| `/trend?ticker=` | very slow | ~1 change per 15 min |
+| `/weather?city=` | slow | ~1 change per 3 min |
+| `/news_sentiment?ticker=` | medium | ~1 change per 50s |
+| `/price?ticker=` | fast | ~1 change per 20s |
 
 ---
 
-### Earnings Reaction Agent
+## Workflow 1: Investment Decision (stock, branching chain)
+
+**Question the agent answers:** "Should I buy, sell, or hold AAPL?"
+
 **Shape:** linear chain with conditional branch
 
 ```
-get_price(AAPL)
+get_price(AAPL)                          ← fast, changes every ~20s
     ↓
-get_earnings_surprise(AAPL)
-    ↓
-IF beat:  get_peer_prices([GOOG, MSFT, AMZN])  →  decide: rotate into peers
-IF miss:  decide: sell AAPL
-```
-
-**Why it's interesting:** A stale `get_earnings_surprise` doesn't just return a wrong number — it causes the agent to take the wrong branch entirely, skipping the peer lookup. The downstream damage is structural, not just numerical. This is one of the strongest arguments that agentic staleness is categorically different from web cache staleness.
-
----
-
-### Sentiment-Adjusted Position Agent
-**Shape:** parallel calls with different change rates → decision
-
-```
-get_price(ticker)           ← changes every ~20s
-get_news_sentiment(ticker)  ← changes with news cycles, fast
-get_analyst_rating(ticker)  ← changes rarely (weekly/monthly)
-    ↓
-decide: sentiment-adjusted buy/sell/hold
-```
-
-**Why it's interesting:** Two tools with very different change rates feeding the same decision. Makes the workflow-aware TTL argument clean and concrete — news sentiment needs a tight TTL, analyst rating can safely have a loose one. Same API call structure, very different caching behavior.
-
----
-
-## Weather / Travel
-
-### Trip Planning Agent
-**Shape:** linear chain with conditional branches
-
-```
-get_weather(destination, Friday)
-get_weather(destination, Saturday)
-    ↓
-IF both good:
-    get_flight_price(origin, destination)
+IF price dropped > 2% vs trend:
+    get_news_sentiment(AAPL)             ← medium, only called conditionally
         ↓
-    IF price < budget:
-        get_hotel_availability(destination)
-            ↓
-        decide: book trip
+    IF sentiment < -0.3: SELL
+    IF sentiment >= -0.3: HOLD
 ELSE:
-    decide: don't book
+    get_trend(AAPL)                      ← slow, only called if price looks stable
+        ↓
+    IF price > trend * 1.05: SELL (overbought)
+    ELSE: BUY or HOLD
 ```
 
-**Why it's interesting:** Stale weather at step 1 can cause the agent to skip the flight lookup entirely — the cache miss doesn't just corrupt a value, it suppresses entire downstream tool calls. The further upstream the stale call, the more work gets skipped or misdirected.
+**Why it's interesting:**
+- `get_price` gates the branch. A stale price doesn't just return a wrong number — it determines which branch the agent takes. The agent might skip the sentiment check entirely, or check it when it shouldn't.
+- `get_news_sentiment` and `get_trend` are only called conditionally, so staleness upstream suppresses downstream tool calls entirely.
+- Three different change rates in one workflow: the TTL needed for each call is completely different.
+
+**Downstream dependents:**
+- `get_price(AAPL)` → 3 dependents (branch selection, sentiment/trend call, final decision)
+- `get_news_sentiment(AAPL)` → 1 dependent (final decision)
+- `get_trend(AAPL)` → 1 dependent (final decision)
 
 ---
 
-### Event Planning Agent
-**Shape:** parallel calls, one dependent on another's output
+## Workflow 2: Portfolio Rebalancing (stock, parallel fan-in)
+
+**Question the agent answers:** "Which of my holdings should I rebalance?"
+
+**Shape:** parallel price lookups → risk computation → decision
 
 ```
-get_weather(city)
-get_venue_availability(city, date)
-    ↓
-get_expected_attendance(event_type, weather=<step1 result>)
-    ↓
-decide: indoor vs outdoor venue, capacity to book
+get_price(AAPL)  ──┬──→  compute_risk_metric(portfolio)  →  decide: rebalance or hold
+                   └──→  compute_tax_liability(AAPL)      →  decide: sell timing
+get_price(GOOG)  ──┤
+                   └──→  compute_risk_metric(portfolio)
+get_price(MSFT)  ──┘
+                   └──→  compute_risk_metric(portfolio)
 ```
 
-**Why it's interesting:** `get_expected_attendance` takes the weather result as an input argument, so staleness in step 1 propagates directly into a wrong tool call argument in step 3 — not just wrong reasoning, but a wrong API call.
+`compute_risk_metric` and `compute_tax_liability` are computed by the agent from the prices — they are not external calls.
+
+**Why it's interesting:**
+- All three price calls have the same change rate, but `get_price(AAPL)` feeds two downstream computations (risk + tax) while GOOG and MSFT each feed only one (risk). So AAPL has a larger blast radius even though the change rates are identical.
+- This is the clearest demonstration that downstream dependent count matters independently of change rate. A policy based only on change rate (like fixed TTL per tool type) gets this wrong.
+
+**Downstream dependents:**
+- `get_price(AAPL)` → 3 dependents (risk metric, tax liability, final decision)
+- `get_price(GOOG)` → 2 dependents (risk metric, final decision)
+- `get_price(MSFT)` → 2 dependents (risk metric, final decision)
 
 ---
 
-## Recommended picks for the paper
+## Workflow 3: Weather-Based Event Decision (weather, branching chain)
 
-Use two workflows that cover different dependency shapes:
+**Question the agent answers:** "Should I schedule the outdoor event this weekend?"
 
-| Workflow | Shape | Why |
+**Shape:** sequential weather checks with conditional branch
+
+```
+get_weather(city, Saturday)              ← slow, changes hourly
+    ↓
+IF Saturday looks good:
+    get_weather(city, Sunday)            ← only checked if Saturday is viable
+        ↓
+    IF both good: SCHEDULE
+    ELSE: MOVE INDOORS
+ELSE:
+    CANCEL
+```
+
+**Why it's interesting:**
+- Stale weather on Saturday can cause the agent to check Sunday when it shouldn't (or skip checking Sunday when it should). The second tool call is suppressed or triggered incorrectly based on the first.
+- Simple structure that cleanly isolates the branch suppression effect — no arithmetic, just a threshold decision.
+- Easiest workflow to build ground truth for: correct answer is determined entirely by the two weather values.
+
+**Downstream dependents:**
+- `get_weather(city, Saturday)` → 2 dependents (Sunday check, final decision)
+- `get_weather(city, Sunday)` → 1 dependent (final decision)
+
+---
+
+## Summary
+
+| Workflow | Endpoints used | Key structural feature |
 |---|---|---|
-| Portfolio Rebalancing | Parallel fan-in | Multiple stale inputs degrade a shared aggregation step |
-| Trip Planning / Earnings Reaction | Branching chain | Staleness suppresses entire branches, not just values |
-
-These two shapes cover the interesting cases and give you distinct stories for how workflow position matters. A third workflow (e.g. Sentiment-Adjusted Position) can be included to show the change-rate contrast that motivates workflow-aware TTL.
+| Investment Decision | price + news_sentiment + trend | Branching suppresses downstream calls; 3 different change rates |
+| Portfolio Rebalancing | price × 3 | Same change rate, different blast radius from downstream dependent count |
+| Weather Event | weather × 2 | Cleanest branch suppression example; easy ground truth |

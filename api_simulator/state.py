@@ -1,13 +1,19 @@
 """
-Manages per-key state for weather and price endpoints.
+Manages per-key state for weather, price, trend, and news_sentiment endpoints.
 
 Each key has:
-  - value:           current data (temperature or price)
+  - value:           current data (temperature, price, moving average, or sentiment score)
   - version:         monotonically increasing integer (incremented on each change)
   - last_changed_at: UTC timestamp of the last value change
 
 A background asyncio loop drives Poisson-distributed updates independently
 per key. Each key's time-to-next-change is sampled from Exp(lambda).
+
+Change rate summary (slowest → fastest):
+  trend:         ~1 change per 15 min  (30-day moving average drifts slowly)
+  weather:       ~1 change per 3 min   (hourly updates from meteostat)
+  news_sentiment:~1 change per 50s     (bursts when news breaks)
+  price:         ~1 change per 20s     (minute-by-minute from yfinance)
 """
 
 import asyncio
@@ -56,6 +62,24 @@ def _make_price_entry() -> Entry:
     )
 
 
+def _make_trend_entry(price: float) -> Entry:
+    """Initial 30-day moving average: seeded near the current price ±5%."""
+    return Entry(
+        value=price * random.uniform(0.95, 1.05),
+        version=1,
+        last_changed_at=time.time(),
+    )
+
+
+def _make_sentiment_entry() -> Entry:
+    """Initial news sentiment: uniform -0.5 to 0.5 (neutral-ish)."""
+    return Entry(
+        value=random.uniform(-0.5, 0.5),
+        version=1,
+        last_changed_at=time.time(),
+    )
+
+
 def _next_change_delay(rate: float) -> float:
     """Sample time to next change from Exp(rate)."""
     return random.expovariate(rate)
@@ -66,10 +90,14 @@ class SimulatorState:
         self._settings = settings
         self._weather: Dict[str, Entry] = {}
         self._price: Dict[str, Entry] = {}
+        self._trend: Dict[str, Entry] = {}
+        self._sentiment: Dict[str, Entry] = {}
 
         # next_change[tool][key] = absolute time (time.time()) when next change fires
         self._next_weather_change: Dict[str, float] = {}
         self._next_price_change: Dict[str, float] = {}
+        self._next_trend_change: Dict[str, float] = {}
+        self._next_sentiment_change: Dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Public accessors (lazy init)
@@ -91,6 +119,25 @@ class SimulatorState:
             )
         return self._price[ticker]
 
+    def get_trend(self, ticker: str) -> Entry:
+        """30-day moving average for a ticker. Seeded near the current price."""
+        if ticker not in self._trend:
+            price = self.get_price(ticker).value
+            self._trend[ticker] = _make_trend_entry(price)
+            self._next_trend_change[ticker] = time.time() + _next_change_delay(
+                self._settings.trend_change_rate
+            )
+        return self._trend[ticker]
+
+    def get_sentiment(self, ticker: str) -> Entry:
+        """News sentiment score for a ticker in [-1.0, 1.0]."""
+        if ticker not in self._sentiment:
+            self._sentiment[ticker] = _make_sentiment_entry()
+            self._next_sentiment_change[ticker] = time.time() + _next_change_delay(
+                self._settings.sentiment_change_rate
+            )
+        return self._sentiment[ticker]
+
     # ------------------------------------------------------------------
     # Background change loop
     # ------------------------------------------------------------------
@@ -102,6 +149,8 @@ class SimulatorState:
             now = time.time()
             self._tick_weather(now)
             self._tick_price(now)
+            self._tick_trend(now)
+            self._tick_sentiment(now)
             await asyncio.sleep(interval)
 
     def _tick_weather(self, now: float) -> None:
@@ -128,4 +177,30 @@ class SimulatorState:
                 entry.last_changed_at = now
                 self._next_price_change[ticker] = now + _next_change_delay(
                     self._settings.price_change_rate
+                )
+
+    def _tick_trend(self, now: float) -> None:
+        for ticker in list(self._next_trend_change):
+            if now >= self._next_trend_change[ticker]:
+                entry = self._trend[ticker]
+                # Very slow drift: ±0.05–0.2% (moving average lags price significantly)
+                pct = random.uniform(0.0005, 0.002) * random.choice([-1, 1])
+                entry.value = max(0.01, entry.value * (1 + pct))
+                entry.version += 1
+                entry.last_changed_at = now
+                self._next_trend_change[ticker] = now + _next_change_delay(
+                    self._settings.trend_change_rate
+                )
+
+    def _tick_sentiment(self, now: float) -> None:
+        for ticker in list(self._next_sentiment_change):
+            if now >= self._next_sentiment_change[ticker]:
+                entry = self._sentiment[ticker]
+                # Burst model: sentiment jumps significantly when news breaks (±0.2–0.6)
+                delta = random.uniform(0.2, 0.6) * random.choice([-1, 1])
+                entry.value = max(-1.0, min(1.0, entry.value + delta))
+                entry.version += 1
+                entry.last_changed_at = now
+                self._next_sentiment_change[ticker] = now + _next_change_delay(
+                    self._settings.sentiment_change_rate
                 )

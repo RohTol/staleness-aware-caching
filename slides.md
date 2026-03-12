@@ -39,7 +39,11 @@ We define structured agent tasks where the correct answer is known (ground truth
 We run the same tasks under a fixed-TTL cache and show that high hit rates do not imply high correctness. This is the core empirical claim: existing metrics are misleading.
 
 **Step 3 — Exploit workflow structure to do better.**
-Not all tool calls are equally sensitive. A tool call that three downstream steps depend on is far more damaging when stale than a leaf-node call at the end of the workflow. We annotate each tool call with its position and number of downstream dependents, and use this to assign tighter TTLs to high-impact calls. Low-impact calls get looser TTLs to preserve hit rate where it's safe.
+Not all tool calls are equally sensitive. Two signals drive this:
+- **Downstream dependent count** — a call that feeds three downstream steps has a larger blast radius when stale than a leaf-node call. In a portfolio workflow, `get_price(AAPL)` might feed both a risk metric and a tax liability calculation, while `get_price(GOOG)` only feeds the risk metric. Both have the same change rate, but a stale AAPL corrupts more intermediate steps.
+- **Workflow position** — upstream calls that gate branching decisions are especially damaging when stale because they don't just corrupt a value, they send the agent down the wrong branch entirely, suppressing downstream tool calls that should have happened.
+
+We annotate each tool call with its position and number of downstream dependents, and use this to assign tighter TTLs to high-impact calls. Low-impact calls get looser TTLs to preserve hit rate where it's safe.
 
 **What we are NOT doing:**
 We are not doing semantic matching of tool calls, thundering herd mitigation, or bursty traffic optimization. Those are real problems but orthogonal to the correctness claim. We stay focused.

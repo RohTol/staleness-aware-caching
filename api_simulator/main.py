@@ -2,17 +2,25 @@
 Dynamic API Simulator
 
 Endpoints:
-  GET /weather?city=<city>     — returns current temperature for a city
-  GET /price?ticker=<ticker>   — returns current price for a ticker
+  GET /weather?city=<city>         — current temperature for a city (meteostat-backed)
+  GET /price?ticker=<ticker>       — current stock price (yfinance-backed)
+  GET /trend?ticker=<ticker>       — 30-day moving average for a ticker (yfinance-backed)
+  GET /news_sentiment?ticker=<t>   — news sentiment score in [-1.0, 1.0] (simulated)
 
-Both return:
+All return:
   {
-    "tool":            "weather" | "price",
+    "tool":            "weather" | "price" | "trend" | "news_sentiment",
     "key":             <city> | <ticker>,
     "value":           <float>,
     "version":         <int>,
     "last_changed_at": <ISO 8601 UTC>
   }
+
+Change rates (slowest → fastest):
+  trend:          ~1 change per 15 min
+  weather:        ~1 change per 3 min
+  news_sentiment: ~1 change per 50s
+  price:          ~1 change per 20s
 
 Configuration is via environment variables prefixed SIM_ (see config.py).
 """
@@ -113,6 +121,26 @@ async def get_price(ticker: str = Query(..., description="Ticker symbol")):
     await _inject_latency(settings.price_latency_mean_ms, settings.price_latency_std_ms)
     entry = state.get_price(ticker)
     return entry.to_dict(tool="price", key=ticker)
+
+
+@app.get("/trend")
+async def get_trend(ticker: str = Query(..., description="Ticker symbol")):
+    """30-day moving average for a ticker. Changes much more slowly than spot price."""
+    _check_rate_limit()
+    _maybe_error()
+    await _inject_latency(settings.trend_latency_mean_ms, settings.trend_latency_std_ms)
+    entry = state.get_trend(ticker)
+    return entry.to_dict(tool="trend", key=ticker)
+
+
+@app.get("/news_sentiment")
+async def get_news_sentiment(ticker: str = Query(..., description="Ticker symbol")):
+    """News sentiment score in [-1.0, 1.0]. Jumps significantly when news breaks."""
+    _check_rate_limit()
+    _maybe_error()
+    await _inject_latency(settings.sentiment_latency_mean_ms, settings.sentiment_latency_std_ms)
+    entry = state.get_sentiment(ticker)
+    return entry.to_dict(tool="news_sentiment", key=ticker)
 
 
 @app.get("/health")

@@ -8,11 +8,23 @@ class Settings(BaseSettings):
     # Price change rate: Poisson lambda (changes/sec). Default ~1 change per 20s.
     price_change_rate: float = 0.05
 
+    # Trend change rate: Poisson lambda (changes/sec). Default ~1 change per 15 min.
+    # Represents a 30-day moving average — drifts very slowly relative to spot price.
+    trend_change_rate: float = 0.001
+
+    # News sentiment change rate: Poisson lambda (changes/sec). Default ~1 change per 50s.
+    # Bursts when news breaks — faster than weather, slower than price.
+    sentiment_change_rate: float = 0.02
+
     # Latency: lognormal parameters (ms). mean/std of the underlying normal distribution.
     weather_latency_mean_ms: float = 80.0
     weather_latency_std_ms: float = 30.0
     price_latency_mean_ms: float = 40.0
     price_latency_std_ms: float = 15.0
+    trend_latency_mean_ms: float = 60.0
+    trend_latency_std_ms: float = 20.0
+    sentiment_latency_mean_ms: float = 50.0
+    sentiment_latency_std_ms: float = 20.0
 
     # Probability of returning a 503 error on any request (0.0 = never)
     error_rate: float = 0.02
