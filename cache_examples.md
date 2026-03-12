@@ -6,33 +6,34 @@ Concrete walkthroughs of what happens with and without the cache for two key wor
 
 ## How the cache works
 
-The cache is shared across all agents and all workflows. The key is `(tool, args)` — e.g. `(weather, {city: "NYC", day: "Friday"})`. Any agent asking for the same tool + args gets the same cached result, as long as the TTL hasn't expired. TTL is the only thing controlling freshness.
+The cache is shared across all agents and all workflows. The key is `(tool, args)` — e.g. `(price, {ticker: "AAPL"})`. Any agent asking for the same tool + args gets the same cached result, as long as the TTL hasn't expired. TTL is the only thing controlling freshness.
+
+Workflows are defined as LangGraph DAGs. The cache gateway receives workflow context (step depth, downstream dependent count) derived automatically from the graph structure on each tool call.
 
 ---
 
-## Example 1: Trip Planning (branching chain)
+## Example 1: Investment Decision (branching chain)
 
 **Workflow:**
 ```
-get_weather(NYC, Friday)
-get_weather(NYC, Saturday)
+get_price(AAPL)                              ← fast, ~1 change per 20s
     ↓
-IF both good:
-    get_flight_price(NYC→LA)
+IF price dropped > 2% vs baseline:
+    get_news_sentiment(AAPL)                 ← medium, ~1 change per 50s
         ↓
-    IF price < budget:
-        get_hotel(LA)
-            ↓
-        decide: BOOK
+    IF sentiment < -0.3: SELL
+    ELSE: HOLD
 ELSE:
-    decide: DON'T BOOK
+    get_trend(AAPL)                          ← slow, ~1 change per 15 min
+        ↓
+    IF price > trend * 1.05: SELL (overbought)
+    ELSE: BUY or HOLD
 ```
 
-**Downstream dependents:**
-- `get_weather(NYC, Friday)` → 3 dependents (Saturday check, flight, hotel, decision)
-- `get_weather(NYC, Saturday)` → 3 dependents
-- `get_flight_price` → 2 dependents (hotel, decision)
-- `get_hotel` → 1 dependent (decision)
+**Downstream dependents (from LangGraph graph edges):**
+- `get_price(AAPL)` → 3 dependents (branch selection, sentiment/trend call, final decision)
+- `get_news_sentiment(AAPL)` → 1 dependent (final decision)
+- `get_trend(AAPL)` → 1 dependent (final decision)
 
 ---
 
@@ -40,14 +41,12 @@ ELSE:
 
 ```
 Agent A at T=0:
-  get_weather(NYC, Friday)   → API call → 72°F, sunny   ✓
-  get_weather(NYC, Saturday) → API call → 68°F, cloudy  ✓
-  both good → get_flight_price(NYC→LA) → API call → $320 ✓
-  price < budget → get_hotel(LA) → API call → available  ✓
-  decision: BOOK ✓
+  get_price(AAPL)        → API call → $182, dropped 3%   ✓
+  price dropped → get_news_sentiment(AAPL) → API call → -0.6 (negative) ✓
+  sentiment < -0.3 → decision: SELL ✓
 
 Agent B at T=10s (same query):
-  get_weather(NYC, Friday)   → API call → 72°F, sunny   ✓
+  get_price(AAPL)        → API call → $182  ✓
   ... same result, same cost
 ```
 
@@ -55,54 +54,49 @@ Every agent pays full API cost. Always correct.
 
 ---
 
-### With fixed TTL = 5 min
+### With fixed TTL = 60s
 
 ```
 Agent A at T=0:
-  get_weather(NYC, Friday)   → MISS → API call → 72°F, sunny   [cached, TTL=5min]
-  get_weather(NYC, Saturday) → MISS → API call → 68°F, cloudy  [cached, TTL=5min]
-  both good → get_flight_price → MISS → $320                   [cached, TTL=5min]
-  get_hotel → MISS → available                                  [cached, TTL=5min]
-  decision: BOOK ✓
+  get_price(AAPL)        → MISS → $182, dropped 3%    [cached, TTL=60s]
+  get_news_sentiment     → MISS → -0.6 (negative)     [cached, TTL=60s]
+  decision: SELL ✓
 
--- real weather changes at T=2min: NYC Friday → 40°F, thunderstorm --
+-- price recovers at T=30s: AAPL back to $187, only down 0.5% --
+-- news sentiment flips at T=40s: +0.4 (positive, recovery story) --
 
-Agent B at T=3min:
-  get_weather(NYC, Friday)   → HIT → 72°F, sunny   ✗ STALE (actual: thunderstorm)
-  get_weather(NYC, Saturday) → HIT → 68°F, cloudy  ✓
-  both "good" → get_flight_price → HIT → $320
-  get_hotel → HIT → available
-  decision: BOOK ✗  (should have been: DON'T BOOK)
+Agent B at T=50s:
+  get_price(AAPL)        → HIT → $182, "dropped 3%"  ✗ STALE (actual: only down 0.5%)
+  stale price triggers wrong branch → get_news_sentiment → HIT → -0.6 ✗ STALE (actual: +0.4)
+  decision: SELL ✗  (should have been: BUY or HOLD)
 ```
 
-High hit rate, wrong answer. Agent B booked a trip into a thunderstorm.
-
-Note also: because step 1 was stale, the agent never even reconsidered the branch. It didn't just get a wrong number — it took the entirely wrong path through the workflow.
+Both stale hits compound: wrong branch taken, wrong sentiment used, wrong decision. 4 out of 4 calls were hits, 0 out of 4 were correct.
 
 ---
 
 ### With workflow-aware TTL
 
-`get_weather` is at step 1 with high downstream dependents and a high change rate → tight TTL (1 min).
-`get_flight_price` is at step 3 with fewer dependents and changes slowly → loose TTL (10 min).
+`get_price` has 3 downstream dependents and the fastest change rate → tight TTL (15s).
+`get_news_sentiment` has 1 downstream dependent and medium change rate → moderate TTL (30s).
+`get_trend` has 1 downstream dependent and the slowest change rate → loose TTL (10 min).
 
 ```
 Agent A at T=0:
-  get_weather(NYC, Friday)   → MISS → API call → 72°F, sunny   [cached, TTL=1min]
-  get_weather(NYC, Saturday) → MISS → API call → 68°F, cloudy  [cached, TTL=1min]
-  get_flight_price           → MISS → $320                     [cached, TTL=10min]
-  get_hotel                  → MISS → available                 [cached, TTL=5min]
-  decision: BOOK ✓
+  get_price(AAPL)        → MISS → $182, dropped 3%    [cached, TTL=15s]
+  get_news_sentiment     → MISS → -0.6                [cached, TTL=30s]
+  decision: SELL ✓
 
--- real weather changes at T=2min --
+-- price recovers at T=30s, sentiment flips at T=40s --
 
-Agent B at T=3min:
-  get_weather(NYC, Friday)   → EXPIRED → API call → 40°F, thunderstorm ✓
-  weather not good → decision: DON'T BOOK ✓
-  (flight + hotel calls never happen → upstream correction saved downstream cost)
+Agent B at T=50s:
+  get_price(AAPL)        → EXPIRED → fresh call → $187, down 0.5%  ✓
+  0.5% drop, not > 2% → takes other branch → get_trend(AAPL)
+  get_trend(AAPL)        → MISS → $183 avg            [cached, TTL=10min] ✓
+  price slightly above trend → decision: HOLD ✓
 ```
 
-Agent B pays for one weather call and gets the right answer. Flight and hotel calls are avoided entirely because the upstream decision is correct. Lower correctness cost than fixed TTL, and still cheaper than no-cache on average because stable downstream calls remain cached.
+Agent B gets the right answer. The tight TTL on `get_price` forced a fresh lookup that corrected the branch, saving Agent B from two stale downstream calls.
 
 ---
 

@@ -15,21 +15,21 @@ The problem with existing caching approaches is that they optimize for the wrong
 The project has three main components working together:
 
 ```
-Agent Runner  →  Cache Gateway  →  API Simulator
-(multi-step        (policy logic)    (dynamic backend)
- workflows)
+LangGraph Agent  →  Cache Gateway  →  API Simulator
+(DAG of tool         (policy logic)    (dynamic backend)
+ call nodes)
 
 POST /v1/tools/invoke    HIT / MISS      GET /price?ticker=
 {tool, args,             STALE / FRESH   GET /weather?city=
- workflow_step,
- downstream_deps}
+ workflow_step,                          GET /trend?ticker=
+ downstream_deps}                        GET /news_sentiment?ticker=
 ```
 
-An **Agent Runner** executes structured multi-step tasks. Each task requires several sequential tool calls, and the results of earlier calls feed into later ones. The agent runner knows the workflow structure and annotates each tool call with its position and how many downstream steps depend on it.
+A **LangGraph Agent** defines each task as a DAG of tool call nodes. LangGraph's graph structure gives us workflow context for free — downstream dependent count is derived directly from the graph edges, and workflow step is the node's topological depth. We run multiple concurrent agent instances to generate realistic cache sharing across agents.
 
 The **Cache Gateway** sits between the agent and the external tools. It intercepts every tool call, checks the cache, returns a hit if valid, and calls upstream on a miss. It implements multiple pluggable policies that use different strategies to decide when a cached result is fresh enough to return.
 
-The **API Simulator** is a fake external backend that mimics real dynamic APIs. Values change over time at configurable rates (stock prices change fast, weather changes slowly), and every response includes version metadata so we can measure staleness precisely.
+The **API Simulator** is a fake external backend that mimics real dynamic APIs. Values change over time at configurable rates, and every response includes version metadata so we can measure staleness precisely against ground truth.
 
 ---
 
@@ -59,8 +59,10 @@ Notice that staleness in Step 1 (current price, high change rate) will corrupt t
 A FastAPI server that mimics dynamic external tool APIs. Values change continuously over time via a background update loop, and every response includes version metadata so the cache layer can measure staleness with ground-truth precision.
 
 **Endpoints:**
-- `GET /weather?city=<city>` — returns current temperature for a city
-- `GET /price?ticker=<ticker>` — returns current price for a ticker
+- `GET /price?ticker=<ticker>` — current stock price (~1 change per 20s)
+- `GET /news_sentiment?ticker=<ticker>` — news sentiment score in [-1, 1] (~1 change per 50s)
+- `GET /weather?city=<city>` — current temperature (~1 change per 3 min)
+- `GET /trend?ticker=<ticker>` — 30-day moving average (~1 change per 15 min)
 - `GET /health` — liveness check
 
 **Sample response:**
@@ -86,12 +88,12 @@ A FastAPI server that mimics dynamic external tool APIs. Values change continuou
 
 | Variable | Default | Effect |
 |---|---|---|
-| `SIM_WEATHER_CHANGE_RATE` | `0.005` | ~1 weather change per 3 min |
 | `SIM_PRICE_CHANGE_RATE` | `0.05` | ~1 price change per 20s |
+| `SIM_SENTIMENT_CHANGE_RATE` | `0.02` | ~1 sentiment change per 50s |
+| `SIM_WEATHER_CHANGE_RATE` | `0.005` | ~1 weather change per 3 min |
+| `SIM_TREND_CHANGE_RATE` | `0.001` | ~1 trend change per 15 min |
 | `SIM_ERROR_RATE` | `0.02` | 2% of requests return 503 |
 | `SIM_RATE_LIMIT_RPS` | `0` | Rate limit (0 = disabled) |
-| `SIM_WEATHER_LATENCY_MEAN_MS` | `80` | Mean weather response latency |
-| `SIM_PRICE_LATENCY_MEAN_MS` | `40` | Mean price response latency |
 
 **Run it:**
 ```bash
@@ -128,13 +130,14 @@ Each request carries workflow context so the policy layer can make position-awar
 
 ---
 
-### 3. Agent Runner (`agent/`) 🚧
+### 3. LangGraph Agent (`agent/`) 🚧
 
-Executes structured multi-step agent tasks against the cache gateway. Tasks are defined as workflow DAGs — each step specifies which tool to call, what it depends on, and how its output feeds into downstream steps.
+Defines agent tasks as LangGraph DAGs and executes them against the cache gateway. LangGraph's graph structure is the source of truth for workflow context — downstream dependent count is derived from graph edges, and workflow step is topological depth. No manual annotation needed.
 
 **Task types:**
-- **Trading decision** — price + trend → buy/sell/hold (2 tool calls, sequential dependency)
-- **Travel advisory** — weather + price (flight cost) → go/don't go (2 parallel + 1 merge step)
+- **Investment decision** — price → conditional news_sentiment or trend → buy/sell/hold
+- **Portfolio rebalancing** — price × 3 (fan-in) → risk computation → rebalance decision
+- **Weather event** — weather today → conditional weather tomorrow → schedule or cancel
 
 For each task, the runner executes it twice: once via the cache gateway (potentially stale) and once directly against the API simulator (always fresh). The fresh result is ground truth. Correctness is whether both agree.
 

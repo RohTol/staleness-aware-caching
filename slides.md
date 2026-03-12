@@ -32,8 +32,8 @@ As agentic systems handle more real-world tasks — trading decisions, travel pl
 
 We build a system that lets us directly measure whether caching hurts agent correctness, and then design a policy that minimizes that harm.
 
-**Step 1 — Build a multi-step agent harness.**
-We define structured agent tasks where the correct answer is known (ground truth). Example: "Should I buy, sell, or hold AAPL?" The agent fetches the current price (step 1), fetches the 30-day trend (step 2), and decides based on both (step 3). Ground truth is computed with fully fresh data. Correctness is whether the cached-data run agrees.
+**Step 1 — Build a multi-step agent harness using LangGraph.**
+We define agent tasks as LangGraph DAGs — the same structure used by real production agentic systems. Each node in the graph is a tool call; edges define data dependencies. LangGraph's graph structure gives us workflow context automatically: downstream dependent count comes from the graph edges, and workflow step is topological depth. No manual annotation needed. Ground truth is computed by running the same graph with fully fresh data (bypassing the cache). Correctness is whether the cached-data run produces the same final decision.
 
 **Step 2 — Show the disconnect between hit rate and correctness.**
 We run the same tasks under a fixed-TTL cache and show that high hit rates do not imply high correctness. This is the core empirical claim: existing metrics are misleading.
@@ -58,7 +58,7 @@ The API Simulator is complete. It is a FastAPI server that mimics dynamic extern
 
 The Cache Gateway architecture is designed but not yet fully implemented. The interface is defined — agents send tool call requests with workflow context (step number, number of downstream dependents), and the gateway returns cached or fresh results based on the active policy. Pluggable policy logic is scaffolded.
 
-The Agent Runner and correctness evaluation harness have not been started yet. This is the critical path for the rest of the project.
+The LangGraph agent and correctness evaluation harness have not been started yet. This is the critical path for the rest of the project. We have chosen LangGraph as the agent framework because its native DAG representation directly provides the workflow structure (node dependencies, topological depth) that the cache gateway needs — without any manual annotation.
 
 The load generator (k6 scripts) from the previous design is being retired. Simulating raw HTTP traffic was not agentic — it did not capture workflow structure or measure correctness.
 
@@ -70,7 +70,7 @@ The load generator (k6 scripts) from the previous design is being retired. Simul
 
 By the end of the semester we will have:
 
-1. **A working multi-step agent harness** with at least two task types (trading decision, travel advisory), each defined as a workflow with sequential tool dependencies. The harness runs each task with and without the cache, records the answers, and computes correctness.
+1. **A LangGraph-based agent harness** with three task types (investment decision, portfolio rebalancing, weather event), each defined as a LangGraph DAG. The harness runs each task through the cache gateway and again directly against the simulator for ground truth, then computes correctness.
 
 2. **Three implemented cache policies:** no cache (always correct, high cost), fixed TTL (standard baseline), and workflow-aware TTL (our contribution). Each policy is configurable and outputs metrics.
 
