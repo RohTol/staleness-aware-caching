@@ -43,7 +43,7 @@ Not all tool calls are equally sensitive. Two signals drive this:
 - **Downstream dependent count** — a call that feeds three downstream steps has a larger blast radius when stale than a leaf-node call. In a portfolio workflow, `get_price(AAPL)` might feed both a risk metric and a tax liability calculation, while `get_price(GOOG)` only feeds the risk metric. Both have the same change rate, but a stale AAPL corrupts more intermediate steps.
 - **Workflow position** — upstream calls that gate branching decisions are especially damaging when stale because they don't just corrupt a value, they send the agent down the wrong branch entirely, suppressing downstream tool calls that should have happened.
 
-We annotate each tool call with its position and number of downstream dependents, and use this to assign tighter TTLs to high-impact calls. Low-impact calls get looser TTLs to preserve hit rate where it's safe.
+Because we use LangGraph, we don't manually annotate anything — the graph structure gives us this information automatically. Downstream dependent count is just the number of nodes reachable from a given node in the DAG. Workflow step is topological depth. The cache gateway reads this from the graph at runtime and uses it to assign tighter TTLs to high-impact calls, looser TTLs where it's safe.
 
 **What we are NOT doing:**
 We are not doing semantic matching of tool calls, thundering herd mitigation, or bursty traffic optimization. Those are real problems but orthogonal to the correctness claim. We stay focused.
@@ -54,13 +54,11 @@ We are not doing semantic matching of tool calls, thundering herd mitigation, or
 
 **Where are we now?**
 
-The API Simulator is complete. It is a FastAPI server that mimics dynamic external APIs (stock prices and weather). Values change continuously over time at configurable rates — prices change fast, weather changes slowly. Every response includes version metadata (version number and last-changed timestamp) so we can measure staleness precisely against ground truth. This component is tested and running.
+The **API Simulator** is complete. It is a FastAPI server with four endpoints: price, trend, news_sentiment, and weather. Each key's value changes continuously via a background Poisson update loop at a configurable rate — prices change every ~20s, sentiment every ~50s, weather every ~3 min, trend every ~15 min. Every response includes a version number and last-changed timestamp so staleness can be measured precisely against ground truth.
 
-The Cache Gateway architecture is designed but not yet fully implemented. The interface is defined — agents send tool call requests with workflow context (step number, number of downstream dependents), and the gateway returns cached or fresh results based on the active policy. Pluggable policy logic is scaffolded.
+The **Cache Gateway** is complete. It is a FastAPI gateway that sits between the LangGraph agent and the API simulator. It accepts tool call requests with workflow context (step depth, downstream dependent count) and applies the active policy. Two policies are implemented: `none` (always calls upstream — correctness baseline) and `fixed_ttl` (one TTL per tool type — the standard Redis-equivalent baseline). Policy is selected at startup via env var. A `/metrics` endpoint returns hit rate and upstream call count at any time.
 
-The LangGraph agent and correctness evaluation harness have not been started yet. This is the critical path for the rest of the project. We have chosen LangGraph as the agent framework because its native DAG representation directly provides the workflow structure (node dependencies, topological depth) that the cache gateway needs — without any manual annotation.
-
-The load generator (k6 scripts) from the previous design is being retired. Simulating raw HTTP traffic was not agentic — it did not capture workflow structure or measure correctness.
+The **LangGraph agent** and correctness evaluation harness have not been started yet. This is the critical path for the rest of the project. We have chosen LangGraph because its native DAG representation directly provides the workflow structure the cache gateway needs — downstream dependent count from graph edges, workflow step from topological depth — without any manual annotation.
 
 ---
 
@@ -70,7 +68,7 @@ The load generator (k6 scripts) from the previous design is being retired. Simul
 
 By the end of the semester we will have:
 
-1. **A LangGraph-based agent harness** with three task types (investment decision, portfolio rebalancing, weather event), each defined as a LangGraph DAG. The harness runs each task through the cache gateway and again directly against the simulator for ground truth, then computes correctness.
+1. **A LangGraph-based agent harness** with two stock-based task types (investment decision, portfolio rebalancing), each defined as a LangGraph DAG. The harness runs each task through the cache gateway and again directly against the simulator for ground truth, then computes correctness. Weather workflows are a stretch goal.
 
 2. **Three implemented cache policies:** no cache (always correct, high cost), fixed TTL (standard baseline), and workflow-aware TTL (our contribution). Each policy is configurable and outputs metrics.
 

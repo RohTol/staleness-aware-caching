@@ -106,27 +106,81 @@ SIM_PRICE_CHANGE_RATE=0.1 SIM_ERROR_RATE=0.05 python3 main.py
 
 ---
 
-### 2. Cache Gateway (`cache_gateway/`) 🚧
+### 2. Cache Gateway (`cache_gateway/`) ✅
 
-An HTTP gateway that agents call via `POST /v1/tools/invoke`. Implements pluggable caching policies and sits between the agent and the API simulator.
+An HTTP gateway that agents call via `POST /v1/tools/invoke`. Implements pluggable caching policies and sits between the agent and the API simulator. Policy is selected at startup via env var — each experiment run is a single policy so metrics are clean.
 
-Each request carries workflow context so the policy layer can make position-aware decisions:
-
+**Request format:**
 ```json
 {
   "tool": "price",
   "args": {"ticker": "AAPL"},
-  "workflow_step": 1,
-  "downstream_dependents": 2
+  "workflow_step": 0,
+  "downstream_dependents": 3
 }
 ```
 
-**Policies:**
-- **No cache** — baseline, always hits upstream, always correct
-- **Fixed TTL** — single global TTL per tool type, ignores workflow position
-- **Workflow-aware TTL** *(our contribution)* — TTL is tightened for tool calls with more downstream dependents and higher observed change rates
+`workflow_step` and `downstream_dependents` are derived automatically from the LangGraph DAG structure — not manually annotated.
 
-**Planned features:** per-policy correctness tracking, Prometheus metrics, stale-while-revalidate.
+**Response format:** same as the API simulator, plus cache metadata:
+```json
+{
+  "tool": "price",
+  "key": "AAPL",
+  "value": 182.34,
+  "version": 47,
+  "last_changed_at": "2026-03-13T14:12:22Z",
+  "cache_status": "hit",
+  "ttl_s": 20.0
+}
+```
+
+`cache_status` is `"hit"`, `"miss"`, or `"bypass"` (no-cache policy).
+
+**Policies (selected via `GW_POLICY` env var):**
+- `none` — always calls upstream, never caches. Correctness baseline.
+- `fixed_ttl` — one TTL per tool type, ignores workflow position entirely. Standard baseline equivalent to what Redis does out of the box.
+- `workflow_aware` *(coming)* — TTL tightened for calls with more downstream dependents and higher change rates.
+
+**Files:**
+
+| File | Description |
+|---|---|
+| `config.py` | All knobs as env vars (prefixed `GW_`). Policy selection, per-tool TTLs, simulator URL. |
+| `cache.py` | In-memory cache store. Key is `(tool, frozenset(args))`. Tracks hits/misses, evicts expired entries on read. |
+| `policy.py` | Policy classes. `NoCachePolicy` bypasses cache entirely. `FixedTTLPolicy` returns per-tool TTL, intentionally ignores workflow context. Adding workflow-aware policy is a third subclass. |
+| `main.py` | FastAPI gateway. Routes `POST /v1/tools/invoke` through cache logic and upstream calls. `GET /metrics` returns hit rate and upstream call count. |
+
+**Key config vars:**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `GW_POLICY` | `none` | `none` or `fixed_ttl` |
+| `GW_TTL_PRICE_S` | `20.0` | Fixed TTL for price calls |
+| `GW_TTL_SENTIMENT_S` | `45.0` | Fixed TTL for news_sentiment calls |
+| `GW_TTL_WEATHER_S` | `180.0` | Fixed TTL for weather calls |
+| `GW_TTL_TREND_S` | `600.0` | Fixed TTL for trend calls |
+| `GW_SIMULATOR_URL` | `http://localhost:8001` | API simulator address |
+
+**Run it:**
+```bash
+cd cache_gateway
+pip install -r requirements.txt
+
+# No-cache baseline
+GW_POLICY=none python3 main.py
+
+# Fixed TTL
+GW_POLICY=fixed_ttl python3 main.py
+
+# Test it (with simulator running on 8001)
+curl -X POST http://localhost:8002/v1/tools/invoke \
+  -H "Content-Type: application/json" \
+  -d '{"tool":"price","args":{"ticker":"AAPL"},"workflow_step":0,"downstream_dependents":3}'
+
+# Check metrics
+curl http://localhost:8002/metrics
+```
 
 ---
 
@@ -134,12 +188,13 @@ Each request carries workflow context so the policy layer can make position-awar
 
 Defines agent tasks as LangGraph DAGs and executes them against the cache gateway. LangGraph's graph structure is the source of truth for workflow context — downstream dependent count is derived from graph edges, and workflow step is topological depth. No manual annotation needed.
 
-**Task types:**
+**Task types (starting with stocks, weather later):**
 - **Investment decision** — price → conditional news_sentiment or trend → buy/sell/hold
 - **Portfolio rebalancing** — price × 3 (fan-in) → risk computation → rebalance decision
-- **Weather event** — weather today → conditional weather tomorrow → schedule or cancel
 
-For each task, the runner executes it twice: once via the cache gateway (potentially stale) and once directly against the API simulator (always fresh). The fresh result is ground truth. Correctness is whether both agree.
+For each task, the agent executes it twice: once via the cache gateway (potentially stale) and once directly against the API simulator (always fresh). The fresh result is ground truth. Correctness is whether both runs produce the same final decision.
+
+The experiment runs many concurrent agent instances against the same cache gateway to generate realistic cache sharing — the same `(tool, args)` entry gets reused across agents, which is where staleness causes damage.
 
 ---
 
