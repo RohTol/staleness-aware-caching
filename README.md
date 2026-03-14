@@ -140,7 +140,7 @@ An HTTP gateway that agents call via `POST /v1/tools/invoke`. Implements pluggab
 **Policies (selected via `GW_POLICY` env var):**
 - `none` — always calls upstream, never caches. Correctness baseline.
 - `fixed_ttl` — one TTL per tool type, ignores workflow position entirely. Standard baseline equivalent to what Redis does out of the box.
-- `workflow_aware` *(coming)* — TTL tightened for calls with more downstream dependents and higher change rates.
+- `workflow_aware` — TTL tightened for calls with more downstream dependents and higher change rates.
 
 **Files:**
 
@@ -148,19 +148,21 @@ An HTTP gateway that agents call via `POST /v1/tools/invoke`. Implements pluggab
 |---|---|
 | `config.py` | All knobs as env vars (prefixed `GW_`). Policy selection, per-tool TTLs, simulator URL. |
 | `cache.py` | In-memory cache store. Key is `(tool, frozenset(args))`. Tracks hits/misses, evicts expired entries on read. |
-| `policy.py` | Policy classes. `NoCachePolicy` bypasses cache entirely. `FixedTTLPolicy` returns per-tool TTL, intentionally ignores workflow context. Adding workflow-aware policy is a third subclass. |
+| `policy.py` | Policy classes. `NoCachePolicy` bypasses cache entirely. `FixedTTLPolicy` returns per-tool TTL, intentionally ignores workflow context. `WorkflowAwareTTLPolicy` tightens TTL based on downstream dependent count and workflow position. |
 | `main.py` | FastAPI gateway. Routes `POST /v1/tools/invoke` through cache logic and upstream calls. `GET /metrics` returns hit rate and upstream call count. |
 
 **Key config vars:**
 
 | Variable | Default | Effect |
 |---|---|---|
-| `GW_POLICY` | `none` | `none` or `fixed_ttl` |
-| `GW_TTL_PRICE_S` | `20.0` | Fixed TTL for price calls |
-| `GW_TTL_SENTIMENT_S` | `45.0` | Fixed TTL for news_sentiment calls |
-| `GW_TTL_WEATHER_S` | `180.0` | Fixed TTL for weather calls |
-| `GW_TTL_TREND_S` | `600.0` | Fixed TTL for trend calls |
+| `GW_POLICY` | `none` | `none`, `fixed_ttl`, or `workflow_aware` |
+| `GW_TTL_PRICE_S` | `20.0` | Base TTL for price calls |
+| `GW_TTL_SENTIMENT_S` | `45.0` | Base TTL for news_sentiment calls |
+| `GW_TTL_WEATHER_S` | `180.0` | Base TTL for weather calls |
+| `GW_TTL_TREND_S` | `600.0` | Base TTL for trend calls |
 | `GW_SIMULATOR_URL` | `http://localhost:8001` | API simulator address |
+| `GW_WA_POSITION_WEIGHT` | `1.5` | (`workflow_aware` only) Extra tightening multiplier for step-0 (root) calls. Root calls gate branching — a stale root sends the agent down the wrong branch entirely. Set to `1.0` to disable position-based tightening. |
+| `GW_WA_MIN_TTL_FRACTION` | `0.2` | (`workflow_aware` only) Floor on TTL as a fraction of the base. Prevents over-tightening — e.g. price TTL never goes below 4s no matter how many dependents a call has. |
 
 **Run it:**
 ```bash
@@ -173,13 +175,22 @@ GW_POLICY=none python3 main.py
 # Fixed TTL
 GW_POLICY=fixed_ttl python3 main.py
 
+# Workflow-aware TTL (our contribution)
+GW_POLICY=workflow_aware python3 main.py
+ 
+# Workflow-aware with custom tuning (optional)
+GW_POLICY=workflow_aware GW_WA_POSITION_WEIGHT=2.0 GW_WA_MIN_TTL_FRACTION=0.1 python3 main.py
+
 # Test it (with simulator running on 8001)
 curl -X POST http://localhost:8002/v1/tools/invoke \
   -H "Content-Type: application/json" \
   -d '{"tool":"price","args":{"ticker":"AAPL"},"workflow_step":0,"downstream_dependents":3}'
 
 # Check metrics
-curl http://localhost:8002/metrics
+# When running workflow_aware, /metrics includes a ttl_preview table showing the exact
+# TTL assigned for every tool × workflow_step × downstream_dependents combination.
+# Useful for sanity-checking the policy before running experiments.
+curl http://localhost:8002/metrics | python3 -m json.tool
 ```
 
 ---
