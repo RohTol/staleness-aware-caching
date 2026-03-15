@@ -37,7 +37,9 @@ ELSE:
 
 ---
 
-### Without cache
+### Without cache (cost baseline)
+
+No-cache always hits the API fresh, so it is always correct by definition. It is the cost ceiling — not a separate comparison run. Ground truth for the other policies is a direct fresh API call, not a no-cache policy run.
 
 ```
 Agent A at T=0:
@@ -47,10 +49,10 @@ Agent A at T=0:
 
 Agent B at T=10s (same query):
   get_price(AAPL)        → API call → $182  ✓
-  ... same result, same cost
+  ... same result, full API cost again
 ```
 
-Every agent pays full API cost. Always correct.
+Every agent pays full API cost. Always correct — but at maximum cost.
 
 ---
 

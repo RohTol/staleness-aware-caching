@@ -35,7 +35,7 @@ The **API Simulator** is a fake external backend that mimics real dynamic APIs. 
 
 ## The Central Experiment
 
-We run the same agent tasks under three cache policies and measure how often the agent produces the correct final answer compared to a no-cache baseline.
+We run agent tasks under three cache policies and measure how often the agent produces the correct final answer compared to a direct fresh call to the API simulator.
 
 **Example task:** "Should I buy, sell, or hold AAPL?"
 
@@ -46,7 +46,7 @@ Step 3: decide based on        ← (current - avg) / avg > threshold
          (step 1, step 2)
 ```
 
-Ground truth is computed by running the same workflow with fully fresh data. Correctness is whether the cached-data decision matches.
+Ground truth is a direct fresh call to the API simulator (bypassing the cache). Correctness is whether the cached-data decision matches. No-cache is correct by definition and serves as the cost baseline — it does not need a separate comparison run.
 
 Notice that staleness in Step 1 (current price, high change rate) will corrupt the decision far more often than staleness in Step 2 (30-day trend, low change rate). A policy that treats both tool calls identically will over-cache Step 1 and under-utilize the cache on Step 2. A workflow-aware policy can do better.
 
@@ -106,7 +106,7 @@ SIM_PRICE_CHANGE_RATE=0.1 SIM_ERROR_RATE=0.05 python3 main.py
 
 ---
 
-### 2. Cache Gateway (`cache_gateway/`) ✅
+### 2. Cache Gateway (`cache_gateway/`) 🚧
 
 An HTTP gateway that agents call via `POST /v1/tools/invoke`. Implements pluggable caching policies and sits between the agent and the API simulator. Policy is selected at startup via env var — each experiment run is a single policy so metrics are clean.
 
@@ -138,9 +138,9 @@ An HTTP gateway that agents call via `POST /v1/tools/invoke`. Implements pluggab
 `cache_status` is `"hit"`, `"miss"`, or `"bypass"` (no-cache policy).
 
 **Policies (selected via `GW_POLICY` env var):**
-- `none` — always calls upstream, never caches. Correctness baseline.
-- `fixed_ttl` — one TTL per tool type, ignores workflow position entirely. Standard baseline equivalent to what Redis does out of the box.
-- `workflow_aware` *(coming)* — TTL tightened for calls with more downstream dependents and higher change rates.
+- `none` ✅ — always calls upstream, never caches. Correctness baseline.
+- `fixed_ttl` ✅ — one TTL per tool type, ignores workflow position entirely. Standard baseline equivalent to what Redis does out of the box.
+- `workflow_aware` 🚧 — TTL tightened for calls with more downstream dependents and higher change rates. Our contribution, not yet implemented.
 
 **Files:**
 
@@ -192,7 +192,7 @@ Defines agent tasks as LangGraph DAGs and executes them against the cache gatewa
 - **Investment decision** — price → conditional news_sentiment or trend → buy/sell/hold
 - **Portfolio rebalancing** — price × 3 (fan-in) → risk computation → rebalance decision
 
-For each task, the agent executes it twice: once via the cache gateway (potentially stale) and once directly against the API simulator (always fresh). The fresh result is ground truth. Correctness is whether both runs produce the same final decision.
+For each task, the agent executes it once via the cache gateway under the policy under test. Ground truth is a direct fresh call to the API simulator. Correctness is whether the cached-data run produces the same final decision. No-cache always hits the API fresh, so it is correct by definition — it is used as the cost baseline, not as a comparison run.
 
 The experiment runs many concurrent agent instances against the same cache gateway to generate realistic cache sharing — the same `(tool, args)` entry gets reused across agents, which is where staleness causes damage.
 
