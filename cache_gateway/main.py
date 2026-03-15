@@ -36,7 +36,8 @@ from typing import Any, Dict
 
 from cache import Cache
 from config import Settings
-from policy import get_policy
+from policy import get_policy, WorkflowAwareTTLPolicy
+
 
 settings = Settings()
 policy = get_policy(settings)
@@ -107,13 +108,39 @@ async def invoke_tool(req: ToolInvokeRequest):
 
 @app.get("/metrics")
 async def metrics():
-    return {
-        "policy":           settings.policy,
-        "hits":             cache.hits,
-        "misses":           cache.misses,
-        "hit_rate":         round(cache.hit_rate, 4),
-        "upstream_calls":   upstream_calls,
+    base = {
+        "policy":         settings.policy,
+        "hits":           cache.hits,
+        "misses":         cache.misses,
+        "hit_rate":       round(cache.hit_rate, 4),
+        "upstream_calls": upstream_calls,
     }
+ 
+    # For workflow_aware, add a TTL preview table so you can sanity-check
+    # at a glance what TTLs are actually being assigned for each combination
+    # of tool x downstream_dependents x workflow_step.  Useful when tuning
+    # GW_WA_POSITION_WEIGHT and GW_WA_MIN_TTL_FRACTION.
+    if isinstance(policy, WorkflowAwareTTLPolicy):
+        tools = ["price", "trend", "weather", "news_sentiment"]
+        preview = {}
+        for tool in tools:
+            preview[tool] = {
+                # Show TTL for 1/2/3 dependents at step 0 (root) and step 1 (non-root)
+                "step0_deps1": policy.get_ttl(tool, workflow_step=0, downstream_dependents=1),
+                "step0_deps2": policy.get_ttl(tool, workflow_step=0, downstream_dependents=2),
+                "step0_deps3": policy.get_ttl(tool, workflow_step=0, downstream_dependents=3),
+                "step1_deps1": policy.get_ttl(tool, workflow_step=1, downstream_dependents=1),
+                "step1_deps2": policy.get_ttl(tool, workflow_step=1, downstream_dependents=2),
+                "step1_deps3": policy.get_ttl(tool, workflow_step=1, downstream_dependents=3),
+            }
+            
+        base["ttl_preview"] = preview
+        base["wa_config"] = {
+            "position_weight":  settings.wa_position_weight,
+            "min_ttl_fraction": settings.wa_min_ttl_fraction,
+        }
+ 
+    return base
 
 
 @app.get("/health")
