@@ -6,7 +6,7 @@ LLM agents solve tasks by making sequential tool calls — fetching a stock pric
 
 The problem with existing caching approaches is that they optimize for the wrong metrics. Hit rate and staleness age are easy to measure, but they don't tell you whether the agent got the right answer. A cache can have a 90% hit rate and still produce wrong answers the majority of the time, if the hits happen to be on tool calls whose results have changed.
 
-**Our contribution:** We show empirically that conventional cache metrics are poor proxies for agent answer correctness, and that staleness impact is not uniform — it depends on where in the workflow a tool call sits. Tool calls that many downstream steps depend on are far more damaging when stale than leaf-node calls. We use this insight to design a workflow-aware TTL policy that allocates tighter TTLs to high-impact tool calls, achieving better correctness at the same API cost as fixed-TTL baselines.
+**Our contribution:** We show empirically that staleness impact is not uniform across a LangGraph workflow — it depends on where in the workflow a tool call sits. Tool calls with more downstream dependents cause disproportionately more damage when stale. We use this insight to design a workflow-aware TTL policy that tightens TTLs at high-fanout positions, reducing staleness exposure where it matters most at the same API cost as fixed-TTL baselines. Correctness motivates the work: stale data in agentic workflows leads to wrong answers. But the primary contribution is the staleness non-uniformity finding and the policy that exploits it.
 
 ---
 
@@ -195,17 +195,40 @@ curl http://localhost:8002/metrics | python3 -m json.tool
 
 ---
 
-### 3. LangGraph Agent (`agent/`) 🚧
+### 3. LangGraph Agent (`agent/`) ✅
 
-Defines agent tasks as LangGraph DAGs and executes them against the cache gateway. LangGraph's graph structure is the source of truth for workflow context — downstream dependent count is derived from graph edges, and workflow step is topological depth. No manual annotation needed.
+Defines agent tasks as LangGraph DAGs and executes them against the cache gateway. Workflow context (`workflow_step`, `downstream_dependents`) is statically derived from the DAG structure and passed to the gateway on every tool call — no manual annotation needed.
 
-**Task types (starting with stocks, weather later):**
+**Task types:**
 - **Investment decision** — price → conditional news_sentiment or trend → buy/sell/hold
-- **Portfolio rebalancing** — price × 3 (fan-in) → risk computation → rebalance decision
+- **Portfolio rebalancing** — price × 3 (fan-in) → risk/tax computation → rebalance decision
 
-For each task, the agent executes it twice: once via the cache gateway (potentially stale) and once directly against the API simulator (always fresh). The fresh result is ground truth. Correctness is whether both runs produce the same final decision.
+For each trial, the agent runs the workflow twice: once through the gateway (potentially stale) and once directly against the simulator (always fresh). The fresh run is ground truth. Staleness is detected per-call by comparing the version number returned by the gateway hit against the current version fetched immediately after from the simulator.
 
-The experiment runs many concurrent agent instances against the same cache gateway to generate realistic cache sharing — the same `(tool, args)` entry gets reused across agents, which is where staleness causes damage.
+**Files:**
+
+| File | Description |
+|---|---|
+| `config.py` | Env vars (prefixed `AGENT_`). Gateway URL, simulator URL, n_trials, workflow selection. |
+| `client.py` | `call_gateway()` and `call_fresh()` — thin HTTP clients for the gateway and simulator. |
+| `workflows/investment_decision.py` | Branching chain workflow. `fetch_price` gates branch to `fetch_news_sentiment` or `fetch_trend`. |
+| `workflows/portfolio_rebalancing.py` | Fan-in workflow. Three parallel price fetches → compute_risk/tax → decide. |
+| `runner.py` | `run_experiment()` runs N trials. `compute_metrics()` aggregates staleness by fanout tier and correctness rate. |
+| `main.py` | Entry point. Prints per-trial results and final metrics JSON. |
+
+**Run it:**
+```bash
+cd agent
+pip install -r requirements.txt
+
+# Default: investment_decision, 100 trials
+python3 main.py
+
+# Portfolio rebalancing, 50 trials
+AGENT_WORKFLOW=portfolio_rebalancing AGENT_N_TRIALS=50 python3 main.py
+```
+
+The gateway policy is set on the gateway side (`GW_POLICY`). Run the agent once per policy and compare `staleness_by_downstream_dependents` in the output.
 
 ---
 
@@ -213,11 +236,11 @@ The experiment runs many concurrent agent instances against the same cache gatew
 
 For each policy × task type, report:
 
-- **Correctness rate** — % of agent decisions matching ground truth (primary metric)
+- **Staleness exposure by workflow position** — staleness rate at cache hit, segmented by downstream_dependents tier (primary metric)
 - **External API QPS** — proxy for cost
-- **Cache hit rate** — shown alongside correctness to demonstrate the disconnect
-- **Staleness age** — shown alongside correctness to demonstrate the disconnect
+- **Cache hit rate** — shown alongside staleness exposure to demonstrate the disconnect
+- **Mean staleness age at hit** — by position, to show non-uniformity
 
-**Key result we expect to show:** Fixed TTL achieves similar or higher hit rates than workflow-aware TTL, but lower correctness — because it over-caches the wrong tool calls. This demonstrates that hit rate is a misleading optimization target in agentic settings.
+**Key result we expect to show:** Fixed TTL distributes staleness uniformly across all tool calls regardless of their downstream impact. Workflow-aware TTL concentrates freshness at high-fanout nodes while tolerating more staleness at leaf nodes — achieving lower staleness exposure at the nodes that matter most, at the same API cost.
 
-**Money plot:** Pareto frontier of API cost vs. correctness across policies. Workflow-aware TTL should dominate fixed TTL on this frontier.
+**Money plot:** Staleness exposure at high-fanout nodes vs. API cost across policies. Workflow-aware TTL should dominate fixed TTL: less staleness where it matters, same cost.
