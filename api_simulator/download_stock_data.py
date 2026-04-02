@@ -32,21 +32,22 @@ Later, the mock API simulator will replay this saved data as if it were serving 
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import yfinance as yf
 
+
+STOCK_DATA_DIR = Path(__file__).with_name("stock_data")
+OUTPUT_FILE = STOCK_DATA_DIR / "stocks_data.csv"
 
 
 
 tickers = ['GOOG', 'TSLA', 'NVDA', 'META', 'COIN', 'MARA', 'HUT', 'SOUN', 'RIOT', 'IREN']
 
-end = datetime.now(timezone.utc)
-start = end - timedelta(days=10)
 
 df = yf.download(
     tickers=tickers,
-    period = "7d",
+    period = "8d",
     interval="1m",
     group_by="ticker",
     auto_adjust=False,
@@ -55,5 +56,6 @@ df = yf.download(
 )
 
 open_df = df.xs("Open", axis=1, level=1)
-open_df.to_csv("stocks_open_only.csv")
+STOCK_DATA_DIR.mkdir(parents=True, exist_ok=True)
+open_df.to_csv(OUTPUT_FILE)
 print(open_df.head())

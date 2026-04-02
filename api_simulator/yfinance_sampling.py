@@ -17,7 +17,7 @@ import yfinance as yf
 
 
 # ticker symbol for the stock you want, here is an example of Apple
-TICKER_SYMBOL = "AAPL"
+TICKER_SYMBOL = "SOUN"
 
 ticker = yf.Ticker(TICKER_SYMBOL)
 print(ticker.ticker)
@@ -32,7 +32,7 @@ df = ticker.history(
 
 # how to get everything within the last period timeframe
 # df = ticker.history(period="700d", interval="1h")
-
+df = ticker.history(period = "2d", interval="1m")
 
 
 print(df)

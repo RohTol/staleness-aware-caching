@@ -18,7 +18,7 @@ import meteostat as ms
 
 
 # point is latitude in degrees, longitude in degrees, elevation in meters above sea level, here is an example of ann arbor
-POINT = ms.Point(42.2800, -83.7500, 113) 
+POINT = ms.Point(42.2162, -83.3554, 113) 
 
 # the first parameter in datetime is the year, the second is the month, the third is the day, the fourth is the hour etc etc
 starting_time = datetime(2018, 1, 1, 0)  # this sets the starting_time to be the first hour of jan 1st 2018
