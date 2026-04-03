@@ -6,24 +6,26 @@ Each key has:
   - version:         monotonically increasing integer (incremented on each change)
   - last_changed_at: UTC timestamp of the last value change
 
-A background asyncio loop drives Poisson-distributed updates independently
-per key. Each key's time-to-next-change is sampled from Exp(lambda).
+A background asyncio loop drives Poisson-distributed updates for the simulated
+weather, trend, and news_sentiment values. Price is replayed deterministically
+from a prerecorded CSV at fixed 20-second intervals.
 
 Change rate summary (slowest → fastest):
   trend:         ~1 change per 15 min  (30-day moving average drifts slowly)
   weather:       ~1 change per 3 min   (hourly updates from meteostat)
   news_sentiment:~1 change per 50s     (bursts when news breaks)
-  price:         ~1 change per 20s     (minute-by-minute from yfinance)
+  price:         every 20s             (replayed from compressed stock CSV)
 """
 
 import asyncio
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict
 
 from config import Settings
+from price_data_provider import PriceDataProvider
 
 
 @dataclass
@@ -48,15 +50,6 @@ def _make_weather_entry() -> Entry:
     """Initial temperature: uniform 20–95°F."""
     return Entry(
         value=random.uniform(20.0, 95.0),
-        version=1,
-        last_changed_at=time.time(),
-    )
-
-
-def _make_price_entry() -> Entry:
-    """Initial price: uniform $10–$500."""
-    return Entry(
-        value=random.uniform(10.0, 500.0),
         version=1,
         last_changed_at=time.time(),
     )
@@ -88,14 +81,16 @@ def _next_change_delay(rate: float) -> float:
 class SimulatorState:
     def __init__(self, settings: Settings):
         self._settings = settings
+        self._price_data = PriceDataProvider(
+            csv_path=settings.price_data_path,
+            step_seconds=settings.price_step_seconds,
+        )
         self._weather: Dict[str, Entry] = {}
-        self._price: Dict[str, Entry] = {}
         self._trend: Dict[str, Entry] = {}
         self._sentiment: Dict[str, Entry] = {}
 
         # next_change[tool][key] = absolute time (time.time()) when next change fires
         self._next_weather_change: Dict[str, float] = {}
-        self._next_price_change: Dict[str, float] = {}
         self._next_trend_change: Dict[str, float] = {}
         self._next_sentiment_change: Dict[str, float] = {}
 
@@ -112,12 +107,12 @@ class SimulatorState:
         return self._weather[city]
 
     def get_price(self, ticker: str) -> Entry:
-        if ticker not in self._price:
-            self._price[ticker] = _make_price_entry()
-            self._next_price_change[ticker] = time.time() + _next_change_delay(
-                self._settings.price_change_rate
-            )
-        return self._price[ticker]
+        snapshot = self._price_data.get_snapshot(ticker, now=time.time())
+        return Entry(
+            value=snapshot.value,
+            version=snapshot.version,
+            last_changed_at=snapshot.last_changed_at,
+        )
 
     def get_trend(self, ticker: str) -> Entry:
         """30-day moving average for a ticker. Seeded near the current price."""
@@ -143,12 +138,11 @@ class SimulatorState:
     # ------------------------------------------------------------------
 
     async def run_change_loop(self) -> None:
-        """Periodically fire value changes for keys whose next-change time has passed."""
+        """Periodically fire value changes for mutable keys."""
         interval = self._settings.change_loop_interval_s
         while True:
             now = time.time()
             self._tick_weather(now)
-            self._tick_price(now)
             self._tick_trend(now)
             self._tick_sentiment(now)
             await asyncio.sleep(interval)
@@ -164,19 +158,6 @@ class SimulatorState:
                 entry.last_changed_at = now
                 self._next_weather_change[city] = now + _next_change_delay(
                     self._settings.weather_change_rate
-                )
-
-    def _tick_price(self, now: float) -> None:
-        for ticker in list(self._next_price_change):
-            if now >= self._next_price_change[ticker]:
-                entry = self._price[ticker]
-                # Multiplicative random walk: ±0.1–1.5%
-                pct = random.uniform(0.001, 0.015) * random.choice([-1, 1])
-                entry.value = max(0.01, entry.value * (1 + pct))
-                entry.version += 1
-                entry.last_changed_at = now
-                self._next_price_change[ticker] = now + _next_change_delay(
-                    self._settings.price_change_rate
                 )
 
     def _tick_trend(self, now: float) -> None:

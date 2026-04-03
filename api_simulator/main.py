@@ -3,8 +3,8 @@ Dynamic API Simulator
 
 Endpoints:
   GET /weather?city=<city>         — current temperature for a city (meteostat-backed)
-  GET /price?ticker=<ticker>       — current stock price (yfinance-backed)
-  GET /trend?ticker=<ticker>       — 30-day moving average for a ticker (yfinance-backed)
+  GET /price?ticker=<ticker>       — current stock price (CSV replay-backed)
+  GET /trend?ticker=<ticker>       — 30-day moving average for a ticker (simulated)
   GET /news_sentiment?ticker=<t>   — news sentiment score in [-1.0, 1.0] (simulated)
 
 All return:
@@ -35,6 +35,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from config import Settings
+from price_data_provider import PriceDataExhaustedError, UnknownTickerError
 from state import SimulatorState
 
 settings = Settings()
@@ -90,6 +91,20 @@ async def _inject_latency(mean_ms: float, std_ms: float) -> None:
 def _maybe_error() -> None:
     if settings.error_rate > 0 and random.random() < settings.error_rate:
         raise HTTPException(status_code=503, detail="Simulated upstream error")
+
+
+# ---------------------------------------------------------------------------
+# Exception handlers
+# ---------------------------------------------------------------------------
+
+@app.exception_handler(UnknownTickerError)
+async def handle_unknown_ticker(_: Request, exc: UnknownTickerError):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(PriceDataExhaustedError)
+async def handle_price_data_exhausted(_: Request, exc: PriceDataExhaustedError):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 # ---------------------------------------------------------------------------

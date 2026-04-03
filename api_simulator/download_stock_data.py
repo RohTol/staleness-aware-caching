@@ -42,7 +42,7 @@ OUTPUT_FILE = STOCK_DATA_DIR / "stocks_data.csv"
 
 
 
-tickers = ['GOOG', 'TSLA', 'NVDA', 'META', 'COIN', 'MARA', 'HUT', 'SOUN', 'RIOT', 'IREN']
+tickers = ['GOOG', 'TSLA', 'NVDA', 'META', 'AAPL', 'COIN', 'MARA', 'HUT', 'SOUN', 'RIOT', 'IREN']
 
 
 df = yf.download(

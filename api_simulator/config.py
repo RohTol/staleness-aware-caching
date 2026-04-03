@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 
 
@@ -5,8 +7,11 @@ class Settings(BaseSettings):
     # Weather change rate: Poisson lambda (changes/sec). Default ~1 change per 3 min.
     weather_change_rate: float = 0.005
 
-    # Price change rate: Poisson lambda (changes/sec). Default ~1 change per 20s.
-    price_change_rate: float = 0.05
+    # Price playback source and cadence.
+    price_data_path: Path = (
+        Path(__file__).resolve().parent / "stock_data" / "compressed_stocks_data.csv"
+    )
+    price_step_seconds: float = 20.0
 
     # Trend change rate: Poisson lambda (changes/sec). Default ~1 change per 15 min.
     # Represents a 30-day moving average — drifts very slowly relative to spot price.
