@@ -62,7 +62,7 @@ def _log_entry(node: str, tool: str, args: dict, result: dict) -> dict:
     }
 
 
-def build_graph(gateway_url: str, simulator_url: str, use_cache: bool = True):
+def build_graph(gateway_url: str, simulator_url: str, use_cache: bool = True, **_kwargs):
 
     def _call(node: str, tool: str, args: dict) -> dict:
         ctx = _CTX[node]

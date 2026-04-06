@@ -1,5 +1,5 @@
 """
-ExperimentRunner — runs N trials of a workflow and collects per-call staleness metrics.
+ExperimentRunner — runs trials of a workflow and collects per-call staleness metrics.
 
 For each trial:
   1. Run workflow through the gateway (cached run) → decision + call_log
@@ -14,21 +14,40 @@ Secondary metric: correctness rate (cached decision matches ground truth).
 
 from __future__ import annotations
 
-import json
+import csv as csv_module
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from client import call_fresh
 from config import settings
 
+CSV_COLUMNS = [
+    "ticker",
+    "simulated_time",
+    "interval_index",
+    "caching_policy",
+    "fresh_decision",
+    "cached_decision",
+    "matched",
+    "branch_taken",
+    "hit_or_miss",
+]
+
 
 @dataclass
 class TrialResult:
+    ticker: str
     trial_id: int
+    interval_index: int        # CSV row index (= price version from simulator)
+    simulated_time: str        # last_changed_at from the price response (fresh run)
+    caching_policy: str        # policy name from gateway /metrics
     cached_decision: str
     fresh_decision: str
     is_correct: bool
-    # One entry per tool call made during the cached run.
+    branch_taken: str          # branch taken in the fresh (ground-truth) run
+    price_cache_status: str    # "hit", "miss", or "bypass" for the price call
+    # One entry per tool call made during the cached run, enriched with staleness.
     calls: list[dict] = field(default_factory=list)
 
 
@@ -56,10 +75,14 @@ def run_trial(
     workflow_module: Any,
     gateway_url: str,
     simulator_url: str,
+    ticker: str = "AAPL",
+    reference_price: float = 180.0,
+    caching_policy: str = "unknown",
 ) -> TrialResult:
     # Cached run (goes through gateway, potentially stale)
     cached_graph, cached_initial = workflow_module.build_graph(
-        gateway_url, simulator_url, use_cache=True
+        gateway_url, simulator_url, use_cache=True,
+        ticker=ticker, reference_price=reference_price,
     )
     cached_state = cached_graph.invoke(cached_initial)
 
@@ -69,22 +92,62 @@ def run_trial(
         for c in cached_state.get("call_log", [])
     ]
 
+    # Price call status from cached run (first entry in call_log is always fetch_price)
+    cached_calls = cached_state.get("call_log", [])
+    price_call = next((c for c in cached_calls if c["tool"] == "price"), {})
+    price_cache_status = price_call.get("cache_status", "unknown")
+
     # Fresh run (bypasses gateway, always correct — ground truth)
     fresh_graph, fresh_initial = workflow_module.build_graph(
-        gateway_url, simulator_url, use_cache=False
+        gateway_url, simulator_url, use_cache=False,
+        ticker=ticker, reference_price=reference_price,
     )
     fresh_state = fresh_graph.invoke(fresh_initial)
 
     cached_decision = cached_state.get("decision", "UNKNOWN")
     fresh_decision = fresh_state.get("decision", "UNKNOWN")
 
+    # Metadata from the fresh run's price result (canonical interval reference)
+    interval_index = fresh_state.get("interval_index") or -1
+    simulated_time = fresh_state.get("simulated_time") or ""
+    branch_taken = fresh_state.get("branch_taken") or "unknown"
+
     return TrialResult(
+        ticker=ticker,
         trial_id=trial_id,
+        interval_index=interval_index,
+        simulated_time=simulated_time,
+        caching_policy=caching_policy,
         cached_decision=cached_decision,
         fresh_decision=fresh_decision,
         is_correct=cached_decision == fresh_decision,
+        branch_taken=branch_taken,
+        price_cache_status=price_cache_status,
         calls=enriched_calls,
     )
+
+
+def write_csv_header(output_csv: str) -> None:
+    """Write CSV header. Call once before the first row."""
+    with open(output_csv, "w", newline="") as f:
+        csv_module.DictWriter(f, fieldnames=CSV_COLUMNS).writeheader()
+
+
+def write_csv_row(result: TrialResult, output_csv: str) -> None:
+    """Append one result row to the CSV (opens in append mode)."""
+    with open(output_csv, "a", newline="") as f:
+        writer = csv_module.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer.writerow({
+            "ticker":          result.ticker,
+            "simulated_time":  result.simulated_time,
+            "interval_index":  result.interval_index,
+            "caching_policy":  result.caching_policy,
+            "fresh_decision":  result.fresh_decision,
+            "cached_decision": result.cached_decision,
+            "matched":         result.is_correct,
+            "branch_taken":    result.branch_taken,
+            "hit_or_miss":     result.price_cache_status,
+        })
 
 
 def run_experiment(
@@ -93,6 +156,7 @@ def run_experiment(
     gateway_url: str = settings.gateway_url,
     simulator_url: str = settings.simulator_url,
 ) -> list[TrialResult]:
+    """Backward-compatible batch experiment runner (no ticker parameterization)."""
     results = []
     for i in range(n_trials):
         result = run_trial(i, workflow_module, gateway_url, simulator_url)

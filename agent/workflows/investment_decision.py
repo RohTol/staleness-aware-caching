@@ -1,14 +1,14 @@
 """
-Investment Decision workflow — "Should I buy, sell, or hold AAPL?"
+Investment Decision workflow — "Should I buy, sell, or hold <ticker>?"
 
 Shape: linear chain with conditional branch
 
-    fetch_price(AAPL)                      step=0, deps=3
+    fetch_price(ticker)                    step=0, deps=3
         ↓
-    IF price dropped > 2% vs reference:
-        fetch_news_sentiment(AAPL)         step=1, deps=1  →  decide (SELL / HOLD)
+    IF price dropped > 2% vs reference_price:
+        fetch_news_sentiment(ticker)       step=1, deps=1  →  decide (SELL / HOLD)
     ELSE:
-        fetch_trend(AAPL)                  step=1, deps=1  →  decide (SELL / BUY / HOLD)
+        fetch_trend(ticker)                step=1, deps=1  →  decide (SELL / BUY / HOLD)
 
 Downstream dependents are statically derived from the DAG (all reachable nodes,
 counting both branches). fetch_price feeds: the branch decision, one conditional
@@ -17,6 +17,10 @@ call (sentiment or trend), and the final decide node = 3.
 Key property: fetch_price gates branching. A stale price doesn't just return a
 wrong number — it can send the agent down the wrong branch entirely, suppressing
 the correct downstream call.
+
+build_graph() accepts ticker and reference_price so the same workflow can be
+instantiated for any stock. Use thresholds.TICKER_REFERENCE_PRICES to get a
+calibrated reference_price that exercises both branches ~50/50.
 """
 
 import operator
@@ -26,9 +30,7 @@ from langgraph.graph import END, StateGraph
 
 from client import call_fresh, call_gateway
 
-TICKER = "AAPL"
-REFERENCE_PRICE = 180.0       # fixed baseline for the price-drop threshold
-PRICE_DROP_THRESHOLD = 0.02   # 2%
+PRICE_DROP_THRESHOLD = 0.02   # 2% drop → news_sentiment branch; else → trend branch
 
 # Statically defined workflow context for each tool-calling node.
 # downstream_dependents = count of all DAG nodes reachable from this node.
@@ -44,6 +46,9 @@ class InvestmentState(TypedDict):
     trend: Optional[float]
     news_sentiment: Optional[float]
     decision: Optional[str]
+    branch_taken: Optional[str]       # "news_sentiment" or "trend"
+    interval_index: Optional[int]     # row index in the CSV (= price version)
+    simulated_time: Optional[str]     # last_changed_at from price response
     # Each tool-calling node appends one entry. Annotated[list, operator.add]
     # tells LangGraph to merge by concatenation rather than overwrite.
     call_log: Annotated[list[dict], operator.add]
@@ -63,10 +68,21 @@ def _log_entry(node: str, tool: str, args: dict, result: dict) -> dict:
     }
 
 
-def build_graph(gateway_url: str, simulator_url: str, use_cache: bool = True):
+def build_graph(
+    gateway_url: str,
+    simulator_url: str,
+    use_cache: bool = True,
+    ticker: str = "AAPL",
+    reference_price: float = 180.0,
+    **_kwargs,
+):
     """
     use_cache=True  → calls go through the gateway (respects policy: hit/miss/bypass)
     use_cache=False → calls go directly to the simulator (ground truth run)
+
+    ticker          → which stock to query (must be in compressed_stocks_data.csv)
+    reference_price → baseline for the 2% drop threshold; use TICKER_REFERENCE_PRICES
+                      from thresholds.py to get a value calibrated for ~50/50 branching
     """
 
     def _call(node: str, tool: str, args: dict) -> dict:
@@ -79,15 +95,21 @@ def build_graph(gateway_url: str, simulator_url: str, use_cache: bool = True):
         return call_fresh(simulator_url, tool, args)
 
     def fetch_price(state: InvestmentState) -> dict:
-        args = {"ticker": TICKER}
+        args = {"ticker": ticker}
         result = _call("fetch_price", "price", args)
+        price = result["value"]
+        pct_change = (price - reference_price) / reference_price
+        branch = "news_sentiment" if pct_change < -PRICE_DROP_THRESHOLD else "trend"
         return {
-            "price": result["value"],
+            "price": price,
+            "branch_taken": branch,
+            "interval_index": result.get("version"),
+            "simulated_time": result.get("last_changed_at"),
             "call_log": [_log_entry("fetch_price", "price", args, result)],
         }
 
     def fetch_news_sentiment(state: InvestmentState) -> dict:
-        args = {"ticker": TICKER}
+        args = {"ticker": ticker}
         result = _call("fetch_news_sentiment", "news_sentiment", args)
         return {
             "news_sentiment": result["value"],
@@ -95,7 +117,7 @@ def build_graph(gateway_url: str, simulator_url: str, use_cache: bool = True):
         }
 
     def fetch_trend(state: InvestmentState) -> dict:
-        args = {"ticker": TICKER}
+        args = {"ticker": ticker}
         result = _call("fetch_trend", "trend", args)
         return {
             "trend": result["value"],
@@ -104,12 +126,12 @@ def build_graph(gateway_url: str, simulator_url: str, use_cache: bool = True):
 
     def decide(state: InvestmentState) -> dict:
         price = state["price"]
-        pct_change = (price - REFERENCE_PRICE) / REFERENCE_PRICE
-        if pct_change < -PRICE_DROP_THRESHOLD:
+        branch = state["branch_taken"]
+        if branch == "news_sentiment":
             sentiment = state.get("news_sentiment") or 0.0
             decision = "SELL" if sentiment < -0.3 else "HOLD"
         else:
-            trend = state.get("trend") or REFERENCE_PRICE
+            trend = state.get("trend") or reference_price
             if price > trend * 1.05:
                 decision = "SELL"
             elif price < trend * 0.98:
@@ -119,8 +141,7 @@ def build_graph(gateway_url: str, simulator_url: str, use_cache: bool = True):
         return {"decision": decision}
 
     def route_after_price(state: InvestmentState) -> str:
-        pct_change = (state["price"] - REFERENCE_PRICE) / REFERENCE_PRICE
-        return "fetch_news_sentiment" if pct_change < -PRICE_DROP_THRESHOLD else "fetch_trend"
+        return state["branch_taken"]
 
     g = StateGraph(InvestmentState)
     g.add_node("fetch_price", fetch_price)
@@ -132,7 +153,7 @@ def build_graph(gateway_url: str, simulator_url: str, use_cache: bool = True):
     g.add_conditional_edges(
         "fetch_price",
         route_after_price,
-        {"fetch_news_sentiment": "fetch_news_sentiment", "fetch_trend": "fetch_trend"},
+        {"news_sentiment": "fetch_news_sentiment", "trend": "fetch_trend"},
     )
     g.add_edge("fetch_news_sentiment", "decide")
     g.add_edge("fetch_trend", "decide")
@@ -143,6 +164,9 @@ def build_graph(gateway_url: str, simulator_url: str, use_cache: bool = True):
         "trend": None,
         "news_sentiment": None,
         "decision": None,
+        "branch_taken": None,
+        "interval_index": None,
+        "simulated_time": None,
         "call_log": [],
     }
 
