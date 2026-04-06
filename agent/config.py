@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     n_trials: int = 0           # 0 = run indefinitely; >0 = stop after this many total trials
     workflow: str = "investment_decision"  # or "portfolio_rebalancing"
     output_csv: str = "results.csv"
+    interval_seconds: float = 0.0  # seconds to sleep between rounds; 0 = run continuously
 
     model_config = {"env_prefix": "AGENT_"}
 

@@ -40,7 +40,7 @@ from runner import (
 )
 from thresholds import TICKER_REFERENCE_PRICES, TICKERS
 
-INTERVAL_SECONDS = 20  # match the API simulator's step size
+INTERVAL_SECONDS = settings.interval_seconds
 
 
 def _load_workflow(name: str):
