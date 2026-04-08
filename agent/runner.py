@@ -34,6 +34,7 @@ CSV_COLUMNS = [
     "branch_taken",
     "hit_or_miss",
     "cached_latency_ms",
+    "cached_branch_taken",   # branch taken by the cached run (may differ from branch_taken on wrong routing)
 ]
 
 
@@ -48,6 +49,7 @@ class TrialResult:
     fresh_decision: str
     is_correct: bool
     branch_taken: str          # branch taken in the fresh (ground-truth) run
+    cached_branch_taken: str   # branch taken by the cached run (wrong if stale price caused misrouting)
     price_cache_status: str    # "hit", "miss", or "bypass" for the price call
     cached_latency_ms: float   # wall-clock time for the cached run (agent's perspective)
     # One entry per tool call made during the cached run, enriched with staleness.
@@ -116,6 +118,7 @@ def run_trial(
     interval_index = fresh_state.get("interval_index") or -1
     simulated_time = fresh_state.get("simulated_time") or ""
     branch_taken = fresh_state.get("branch_taken") or "unknown"
+    cached_branch_taken = cached_state.get("branch_taken") or "unknown"
 
     return TrialResult(
         ticker=ticker,
@@ -127,6 +130,7 @@ def run_trial(
         fresh_decision=fresh_decision,
         is_correct=cached_decision == fresh_decision,
         branch_taken=branch_taken,
+        cached_branch_taken=cached_branch_taken,
         price_cache_status=price_cache_status,
         cached_latency_ms=cached_latency_ms,
         calls=enriched_calls,
@@ -152,8 +156,9 @@ def write_csv_row(result: TrialResult, output_csv: str) -> None:
             "cached_decision": result.cached_decision,
             "matched":         result.is_correct,
             "branch_taken":    result.branch_taken,
-            "hit_or_miss":        result.price_cache_status,
-            "cached_latency_ms":  result.cached_latency_ms,
+            "hit_or_miss":          result.price_cache_status,
+            "cached_latency_ms":    result.cached_latency_ms,
+            "cached_branch_taken":  result.cached_branch_taken,
         })
 
 

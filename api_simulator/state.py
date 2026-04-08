@@ -133,6 +133,18 @@ class SimulatorState:
             )
         return self._sentiment[ticker]
 
+    def reset_all(self) -> None:
+        """Reset price playback to row 0 AND clear all mutable state (trend, sentiment, weather).
+        Mutable state will be lazily re-initialized on next access, giving each experiment
+        a fresh starting point and making cross-policy comparisons fair."""
+        self._price_data._playback_start_time = time.time()
+        self._weather.clear()
+        self._trend.clear()
+        self._sentiment.clear()
+        self._next_weather_change.clear()
+        self._next_trend_change.clear()
+        self._next_sentiment_change.clear()
+
     def reset_price_playback(self) -> None:
         """Reset price CSV playback to row 0 (resets the market clock to now)."""
         self._price_data._playback_start_time = time.time()

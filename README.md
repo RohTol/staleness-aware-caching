@@ -234,30 +234,41 @@ The gateway policy is set on the gateway side (`GW_POLICY`). Run the agent once 
 
 ## Experimental Results
 
-Experiments were run on the `investment_decision` workflow across all 11 tickers. Each policy ran from the same starting point in the price CSV (row 0) to ensure comparable market conditions. ~1500 trials per policy.
+Experiments were run on the `investment_decision` workflow across all 11 tickers. Each policy ran from the same starting point in the price CSV (row 0) with all mutable simulator state (trend, sentiment) reset between experiments to ensure fair comparison. ~2000 trials per policy.
+
+The routing threshold was calibrated to 0.5% (matching real inter-row price volatility) so that stale cached prices can actually cross the routing boundary and cause wrong-branch decisions — the most damaging failure mode in a branching workflow.
 
 ### Summary
 
 | Policy | Hit Rate | Mismatch Rate | Avg Latency |
 |---|---|---|---|
-| `none` (baseline) | 0% | 0.1% | 243ms |
-| `fixed_ttl` | 79.1% | **5.9%** | 84ms |
-| `workflow_aware` | 48.8% | **1.1%** | 108ms |
+| `none` (baseline) | 0% | **0.0%** | 280ms |
+| `fixed_ttl` | 79.9% | **2.7%** | 79ms |
+| `workflow_aware` | 49.6% | **1.2%** | 110ms |
 
 ### Key Findings
 
-**1. Workflow-aware TTL reduces decision errors by 5.4× vs. fixed TTL** (5.9% → 1.1%), while staying 2.3× faster than no-cache (108ms vs. 243ms) and retaining nearly half the cache hit rate.
+**1. Workflow-aware TTL reduces decision errors by 2.25× vs. fixed TTL** (2.7% → 1.2%), while staying 2.5× faster than no-cache (110ms vs. 280ms) and retaining nearly half the cache hit rate.
 
-**2. The improvement is concentrated exactly where the theory predicts.** The workflow-aware policy tightens the price TTL at the root node (step=0, deps=3) from 20s → 6.7s. This eliminates wrong-branch routing errors:
+**2. The most damaging failure mode — wrong-branch routing — is eliminated entirely.** The workflow-aware policy tightens the price TTL at the root node (step=0, deps=3) from 20s → 6.7s. In fixed_ttl, 27.3% of all mismatches (15/55) are wrong-branch errors: a stale price crosses the routing threshold and sends the agent down the wrong branch, suppressing the correct downstream call entirely. Workflow-aware reduces this to zero.
+
+| Mismatch type | fixed_ttl | workflow_aware |
+|---|---|---|
+| Wrong-branch (stale price → wrong routing) | 15/55 (27.3%) | **0/24 (0.0%)** |
+| Same-branch (stale leaf value → wrong decision) | 40/55 (72.7%) | 24/24 (100%) |
+
+**3. Branch-level breakdown shows where fixed_ttl fails.** The news_sentiment branch has an 11.9% mismatch rate under fixed_ttl because most of those mismatches are wrong-branch cases — the fresh run routes to news_sentiment but the cached run (using a stale price) routes to trend, or vice versa. Workflow-aware reduces news_sentiment mismatches from 26 to 1.
 
 | Branch | fixed_ttl mismatch rate | workflow_aware mismatch rate |
 |---|---|---|
-| trend (price gates routing) | 5.7% | 1.1% — **80% reduction** |
-| news_sentiment | 8.1% | 0.6% — **93% reduction** |
+| news_sentiment | 11.9% (26/219) | 0.5% (1/215) — **96% reduction** |
+| trend | 1.6% (29/1785) | 1.3% (23/1793) — **19% reduction** |
 
-**3. The latency tradeoff is modest.** workflow_aware is only 28% slower than fixed_ttl (108ms vs. 84ms) while eliminating 82% of its decision errors. The cost of freshness at high-fanout nodes is small.
+**4. Leaf-node staleness is the remaining gap.** The 1.2% residual mismatch rate in workflow_aware comes entirely from stale trend and sentiment values at leaf nodes (step=1, deps=1), which the policy intentionally does not tighten. This is expected — the policy prioritizes freshness where blast radius is highest. Eliminating leaf-node staleness would require tighter TTLs there too, at the cost of more cache misses.
 
-**4. Leaf-node staleness is the remaining gap.** The 1.1% residual mismatch rate in workflow_aware comes from stale trend values at the leaf node (step=1, deps=1), which the policy intentionally does not tighten. This is expected behavior — the policy prioritizes freshness where blast radius is highest.
+**5. The latency tradeoff is modest.** workflow_aware is only 39% slower than fixed_ttl (110ms vs. 79ms) while eliminating 56% of its decision errors and all wrong-branch routing failures. The cost of freshness at high-fanout nodes is small.
+
+**Caveat on decision distributions:** Because fixed_ttl (79ms/trial) completes trials faster than workflow_aware (110ms/trial), the two policies traverse slightly different ranges of the price CSV over the same number of trials — faster runs cover fewer price intervals in wall-clock time. This means the three policies did not see identical market conditions, and aggregate decision distributions differ across runs. The mismatch rates (correct vs. stale decision within the same run) are unaffected by this.
 
 ### How to Reproduce
 
@@ -265,11 +276,15 @@ Experiments were run on the `investment_decision` workflow across all 11 tickers
 # Start the simulator (keep running throughout)
 cd api_simulator && python3 main.py
 
-# Run all three experiments automatically (resets simulator to row 0 between each)
+# Run all three experiments automatically
+# (resets simulator to row 0 and clears all mutable state between each)
 cd .. && bash run_experiments.sh
 
 # Analyze results
-cd agent && python3 analyze.py results_none_final.csv results_fixed_ttl_final.csv results_workflow_aware_final.csv
+cd agent && python3 analyze.py \
+    results/results_none_v2.csv \
+    results/results_fixed_ttl_v2.csv \
+    results/results_workflow_aware_v2.csv
 ```
 
 ---

@@ -11,8 +11,8 @@
 
 set -e
 
-TARGET_ROWS=${TARGET_ROWS:-1500}
-SUFFIX=${SUFFIX:-"final"}
+TARGET_ROWS=${TARGET_ROWS:-2000}
+SUFFIX=${SUFFIX:-"v2"}
 
 PYTHON="/home/rohtol/cse585/agent/venv/bin/python3"
 GW_DIR="/home/rohtol/cse585/cache_gateway"
@@ -29,7 +29,7 @@ trap cleanup EXIT
 
 run_experiment() {
     local policy=$1
-    local csv_file="results_${policy}_${SUFFIX}.csv"
+    local csv_file="results/results_${policy}_${SUFFIX}.csv"
 
     echo ""
     echo "========================================"
@@ -37,6 +37,9 @@ run_experiment() {
     echo "  output : $csv_file"
     echo "  target : $TARGET_ROWS rows"
     echo "========================================"
+
+    # Ensure results directory exists
+    mkdir -p "$AGENT_DIR/results"
 
     # Reset simulator price playback to row 0
     curl -s -X POST http://localhost:8001/reset > /dev/null
@@ -88,6 +91,6 @@ echo "  ANALYSIS"
 echo "========================================"
 cd "$AGENT_DIR"
 "$PYTHON" analyze.py \
-    "results_none_${SUFFIX}.csv" \
-    "results_fixed_ttl_${SUFFIX}.csv" \
-    "results_workflow_aware_${SUFFIX}.csv"
+    "results/results_none_${SUFFIX}.csv" \
+    "results/results_fixed_ttl_${SUFFIX}.csv" \
+    "results/results_workflow_aware_${SUFFIX}.csv"

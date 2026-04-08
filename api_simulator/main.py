@@ -160,9 +160,9 @@ async def get_news_sentiment(ticker: str = Query(..., description="Ticker symbol
 
 @app.post("/reset")
 async def reset():
-    """Reset price playback to row 0. Call between experiments for reproducibility."""
-    state.reset_price_playback()
-    return {"status": "reset", "message": "price playback reset to row 0"}
+    """Reset price playback to row 0 and clear all mutable state. Call between experiments for reproducibility."""
+    state.reset_all()
+    return {"status": "reset", "message": "price playback and all mutable state reset"}
 
 
 @app.get("/health")

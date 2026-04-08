@@ -23,7 +23,7 @@ _CSV_PATH = os.path.join(
 # All tickers present in compressed_stocks_data.csv.
 TICKERS = ["AAPL", "GOOG", "TSLA", "NVDA", "META", "COIN", "MARA", "HUT", "SOUN", "RIOT", "IREN"]
 
-_PRICE_DROP_THRESHOLD = 0.02  # must match investment_decision.PRICE_DROP_THRESHOLD
+_PRICE_DROP_THRESHOLD = 0.005  # must match investment_decision.PRICE_DROP_THRESHOLD
 
 
 def _compute() -> dict[str, float]:

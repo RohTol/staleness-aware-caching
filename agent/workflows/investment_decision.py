@@ -30,7 +30,7 @@ from langgraph.graph import END, StateGraph
 
 from client import call_fresh, call_gateway
 
-PRICE_DROP_THRESHOLD = 0.02   # 2% drop → news_sentiment branch; else → trend branch
+PRICE_DROP_THRESHOLD = 0.005  # 0.5% drop → news_sentiment branch; else → trend branch
 
 # Statically defined workflow context for each tool-calling node.
 # downstream_dependents = count of all DAG nodes reachable from this node.

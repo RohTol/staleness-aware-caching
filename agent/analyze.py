@@ -58,6 +58,17 @@ def analyze(rows: list[dict], label: str) -> None:
     print(f"  mismatch rate   : {mismatch_rate:.1%}  ({len(mismatches)} mismatches)")
     print(f"  avg latency     : {avg_latency:.0f}ms / trial")
 
+    # Wrong-branch vs same-branch mismatch breakdown (requires cached_branch_taken column)
+    has_cached_branch = "cached_branch_taken" in (rows[0] if rows else {})
+    wrong_branch_mm = 0
+    same_branch_mm  = 0
+    if has_cached_branch:
+        for r in mismatches:
+            if r.get("cached_branch_taken", "") != r.get("branch_taken", ""):
+                wrong_branch_mm += 1
+            else:
+                same_branch_mm += 1
+
     print(f"\n  mismatches by branch:")
     for branch in sorted(total_by_branch):
         n_total = total_by_branch[branch]
@@ -65,6 +76,13 @@ def analyze(rows: list[dict], label: str) -> None:
         n_hits  = hits_by_branch.get(branch, 0)
         print(f"    {branch:<18}  mismatches={n_mm}/{n_total} ({n_mm/n_total:.1%})  "
               f"hits={n_hits}/{n_total} ({n_hits/n_total:.1%})")
+
+    if has_cached_branch and mismatches:
+        print(f"\n  mismatch type breakdown:")
+        print(f"    wrong-branch  : {wrong_branch_mm}/{len(mismatches)} ({wrong_branch_mm/len(mismatches):.1%})  "
+              f"(stale price crossed routing threshold → wrong branch)")
+        print(f"    same-branch   : {same_branch_mm}/{len(mismatches)} ({same_branch_mm/len(mismatches):.1%})  "
+              f"(correct routing but stale leaf value → wrong decision)")
 
     print(f"\n  fresh decision distribution:")
     for decision, count in sorted(decision_counts.items(), key=lambda x: -x[1]):
