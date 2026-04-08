@@ -232,15 +232,52 @@ The gateway policy is set on the gateway side (`GW_POLICY`). Run the agent once 
 
 ---
 
-## Evaluation Plan
+## Experimental Results
 
-For each policy × task type, report:
+Experiments were run on the `investment_decision` workflow across all 11 tickers. Each policy ran from the same starting point in the price CSV (row 0) to ensure comparable market conditions. ~1500 trials per policy.
 
-- **Staleness exposure by workflow position** — staleness rate at cache hit, segmented by downstream_dependents tier (primary metric)
-- **External API QPS** — proxy for cost
-- **Cache hit rate** — shown alongside staleness exposure to demonstrate the disconnect
-- **Mean staleness age at hit** — by position, to show non-uniformity
+### Summary
 
-**Key result we expect to show:** Fixed TTL distributes staleness uniformly across all tool calls regardless of their downstream impact. Workflow-aware TTL concentrates freshness at high-fanout nodes while tolerating more staleness at leaf nodes — achieving lower staleness exposure at the nodes that matter most, at the same API cost.
+| Policy | Hit Rate | Mismatch Rate | Avg Latency |
+|---|---|---|---|
+| `none` (baseline) | 0% | 0.1% | 243ms |
+| `fixed_ttl` | 79.1% | **5.9%** | 84ms |
+| `workflow_aware` | 48.8% | **1.1%** | 108ms |
 
-**Money plot:** Staleness exposure at high-fanout nodes vs. API cost across policies. Workflow-aware TTL should dominate fixed TTL: less staleness where it matters, same cost.
+### Key Findings
+
+**1. Workflow-aware TTL reduces decision errors by 5.4× vs. fixed TTL** (5.9% → 1.1%), while staying 2.3× faster than no-cache (108ms vs. 243ms) and retaining nearly half the cache hit rate.
+
+**2. The improvement is concentrated exactly where the theory predicts.** The workflow-aware policy tightens the price TTL at the root node (step=0, deps=3) from 20s → 6.7s. This eliminates wrong-branch routing errors:
+
+| Branch | fixed_ttl mismatch rate | workflow_aware mismatch rate |
+|---|---|---|
+| trend (price gates routing) | 5.7% | 1.1% — **80% reduction** |
+| news_sentiment | 8.1% | 0.6% — **93% reduction** |
+
+**3. The latency tradeoff is modest.** workflow_aware is only 28% slower than fixed_ttl (108ms vs. 84ms) while eliminating 82% of its decision errors. The cost of freshness at high-fanout nodes is small.
+
+**4. Leaf-node staleness is the remaining gap.** The 1.1% residual mismatch rate in workflow_aware comes from stale trend values at the leaf node (step=1, deps=1), which the policy intentionally does not tighten. This is expected behavior — the policy prioritizes freshness where blast radius is highest.
+
+### How to Reproduce
+
+```bash
+# Start the simulator (keep running throughout)
+cd api_simulator && python3 main.py
+
+# Run all three experiments automatically (resets simulator to row 0 between each)
+cd .. && bash run_experiments.sh
+
+# Analyze results
+cd agent && python3 analyze.py results_none_final.csv results_fixed_ttl_final.csv results_workflow_aware_final.csv
+```
+
+---
+
+## Planned Extensions
+
+- **Staleness duration analysis** — for stale cache hits, measure how many seconds old the cached value was when served. Expected: fixed_ttl staleness up to 20s; workflow_aware capped at ~6.7s. Would directly visualize the TTL tightening effect.
+- **Time-series mismatch clustering** — show that mismatches in fixed_ttl cluster in the interval immediately after a price row change (when a stale entry is still live), while workflow_aware mismatches are uniformly distributed.
+- **Portfolio rebalancing experiments** — run the same policy comparison on the fan-in workflow (`portfolio_rebalancing`), where three price calls at step=0 have different downstream dependent counts (3, 2, 2). Isolates `downstream_dependents` as the variable independent of change rate.
+- **Per-ticker breakdown** — identify which tickers produce the most mismatches and whether certain price ranges or volatility profiles are more sensitive to staleness.
+- **Visualizations** — matplotlib charts for the mismatch rate comparison, latency tradeoff curve, and staleness duration distribution for use in slides/paper.
