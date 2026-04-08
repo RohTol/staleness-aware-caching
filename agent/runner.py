@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import csv as csv_module
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,6 +33,7 @@ CSV_COLUMNS = [
     "matched",
     "branch_taken",
     "hit_or_miss",
+    "cached_latency_ms",
 ]
 
 
@@ -47,6 +49,7 @@ class TrialResult:
     is_correct: bool
     branch_taken: str          # branch taken in the fresh (ground-truth) run
     price_cache_status: str    # "hit", "miss", or "bypass" for the price call
+    cached_latency_ms: float   # wall-clock time for the cached run (agent's perspective)
     # One entry per tool call made during the cached run, enriched with staleness.
     calls: list[dict] = field(default_factory=list)
 
@@ -84,7 +87,9 @@ def run_trial(
         gateway_url, simulator_url, use_cache=True,
         ticker=ticker, reference_price=reference_price,
     )
+    _t0 = time.time()
     cached_state = cached_graph.invoke(cached_initial)
+    cached_latency_ms = round((time.time() - _t0) * 1000, 1)
 
     # Enrich call log with staleness flags
     enriched_calls = [
@@ -123,6 +128,7 @@ def run_trial(
         is_correct=cached_decision == fresh_decision,
         branch_taken=branch_taken,
         price_cache_status=price_cache_status,
+        cached_latency_ms=cached_latency_ms,
         calls=enriched_calls,
     )
 
@@ -146,7 +152,8 @@ def write_csv_row(result: TrialResult, output_csv: str) -> None:
             "cached_decision": result.cached_decision,
             "matched":         result.is_correct,
             "branch_taken":    result.branch_taken,
-            "hit_or_miss":     result.price_cache_status,
+            "hit_or_miss":        result.price_cache_status,
+            "cached_latency_ms":  result.cached_latency_ms,
         })
 
 

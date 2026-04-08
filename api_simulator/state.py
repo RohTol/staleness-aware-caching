@@ -133,6 +133,10 @@ class SimulatorState:
             )
         return self._sentiment[ticker]
 
+    def reset_price_playback(self) -> None:
+        """Reset price CSV playback to row 0 (resets the market clock to now)."""
+        self._price_data._playback_start_time = time.time()
+
     # ------------------------------------------------------------------
     # Background change loop
     # ------------------------------------------------------------------

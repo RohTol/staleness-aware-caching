@@ -158,6 +158,13 @@ async def get_news_sentiment(ticker: str = Query(..., description="Ticker symbol
     return entry.to_dict(tool="news_sentiment", key=ticker)
 
 
+@app.post("/reset")
+async def reset():
+    """Reset price playback to row 0. Call between experiments for reproducibility."""
+    state.reset_price_playback()
+    return {"status": "reset", "message": "price playback reset to row 0"}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

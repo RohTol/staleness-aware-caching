@@ -27,8 +27,11 @@ def analyze(rows: list[dict], label: str) -> None:
     bypasses    = [r for r in rows if r["hit_or_miss"] == "bypass"]
     mismatches  = [r for r in rows if r["matched"] == "False"]
 
-    hit_rate    = len(hits) / total
+    hit_rate      = len(hits) / total
     mismatch_rate = len(mismatches) / total
+
+    latencies = [float(r["cached_latency_ms"]) for r in rows if r.get("cached_latency_ms")]
+    avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
 
     # Mismatch breakdown by branch
     mm_by_branch: dict[str, int] = defaultdict(int)
@@ -53,6 +56,7 @@ def analyze(rows: list[dict], label: str) -> None:
     print(f"{'='*55}")
     print(f"  hit rate        : {hit_rate:.1%}  ({len(hits)} hits, {len(misses)} misses, {len(bypasses)} bypasses)")
     print(f"  mismatch rate   : {mismatch_rate:.1%}  ({len(mismatches)} mismatches)")
+    print(f"  avg latency     : {avg_latency:.0f}ms / trial")
 
     print(f"\n  mismatches by branch:")
     for branch in sorted(total_by_branch):
@@ -72,15 +76,17 @@ def compare(all_data: dict[str, list[dict]]) -> None:
     print(f"\n\n{'='*55}")
     print("  SUMMARY COMPARISON")
     print(f"{'='*55}")
-    print(f"  {'policy':<20}  {'hit rate':>9}  {'mismatch rate':>14}  {'mismatches':>10}")
-    print(f"  {'-'*20}  {'-'*9}  {'-'*14}  {'-'*10}")
+    print(f"  {'policy':<20}  {'hit rate':>9}  {'mismatch rate':>14}  {'mismatches':>10}  {'avg latency':>12}")
+    print(f"  {'-'*20}  {'-'*9}  {'-'*14}  {'-'*10}  {'-'*12}")
     for label, rows in all_data.items():
         total = len(rows)
         if total == 0:
             continue
         hits       = sum(1 for r in rows if r["hit_or_miss"] == "hit")
         mismatches = sum(1 for r in rows if r["matched"] == "False")
-        print(f"  {label:<20}  {hits/total:>9.1%}  {mismatches/total:>14.1%}  {mismatches:>10}/{total}")
+        lats       = [float(r["cached_latency_ms"]) for r in rows if r.get("cached_latency_ms")]
+        avg_lat    = sum(lats) / len(lats) if lats else 0.0
+        print(f"  {label:<20}  {hits/total:>9.1%}  {mismatches/total:>14.1%}  {mismatches:>10}/{total}  {avg_lat:>10.0f}ms")
 
 
 def main():
