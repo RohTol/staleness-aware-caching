@@ -289,10 +289,54 @@ cd agent && python3 analyze.py \
 
 ---
 
-## Planned Extensions
+## Next Steps (Research Roadmap)
 
-- **Staleness duration analysis** — for stale cache hits, measure how many seconds old the cached value was when served. Expected: fixed_ttl staleness up to 20s; workflow_aware capped at ~6.7s. Would directly visualize the TTL tightening effect.
-- **Time-series mismatch clustering** — show that mismatches in fixed_ttl cluster in the interval immediately after a price row change (when a stale entry is still live), while workflow_aware mismatches are uniformly distributed.
-- **Portfolio rebalancing experiments** — run the same policy comparison on the fan-in workflow (`portfolio_rebalancing`), where three price calls at step=0 have different downstream dependent counts (3, 2, 2). Isolates `downstream_dependents` as the variable independent of change rate.
-- **Per-ticker breakdown** — identify which tickers produce the most mismatches and whether certain price ranges or volatility profiles are more sensitive to staleness.
+**Near-term validation:**
 - **Visualizations** — matplotlib charts for the mismatch rate comparison, latency tradeoff curve, and staleness duration distribution for use in slides/paper.
+- **Portfolio rebalancing experiments** — run the same policy comparison on the fan-in workflow to isolate `downstream_dependents` as the variable independent of change rate.
+
+**Longer-term research directions:**
+- **Real LLM integration** — connect to an actual LLM (Claude, GPT-4) and measure how staleness in tool results propagates through LLM reasoning chains. Current agent logic is deterministic; the interesting question is whether LLMs are more or less robust to stale inputs than deterministic decision rules.
+- **Adaptive TTL learning** — replace hand-tuned per-position TTLs with an online learner that observes staleness/mismatch feedback and adjusts TTLs automatically. The workflow-aware policy is a hand-crafted prior; the goal is to learn it from data.
+- **Staleness budget allocation** — formalize the problem: given a tolerable mismatch rate budget, allocate TTLs optimally across the DAG. Opens up principled optimization framing (LP, bandit methods).
+- **Generalization to arbitrary DAGs** — auto-derive the TTL policy from any LangGraph DAG at runtime purely from graph structure, rather than per-workflow hand-coding. This is what makes the contribution broadly deployable.
+- **Multi-agent cache sharing** — when concurrent agents share a cache, one agent's stale hit can corrupt another agent's correctness. Characterize how staleness propagates across agents and whether per-agent TTL policies are needed.
+
+---
+
+## Poster Outline
+
+> Structure for the CSE585 poster presentation. Required sections: abstract, motivation/problem, solution, evaluation, next steps.
+
+### Abstract
+Caching tool call results in LLM agentic workflows reduces cost and latency, but stale cached data can silently corrupt agent decisions. We show that staleness impact is non-uniform across a workflow DAG — tool calls at high-fanout positions cause disproportionately more decision errors when stale. We design a workflow-aware TTL policy that exploits this structure, reducing decision mismatches by 2.25× over a standard fixed-TTL cache while retaining most of the latency benefit.
+
+### 1. Motivation / Problem
+- LLM agents make sequential tool calls (price lookups, news sentiment, trends) and cache results to reduce API cost and latency.
+- Standard caches treat all tool calls identically — same TTL regardless of where the call sits in the workflow.
+- **Key insight:** a stale result at a branching root node sends the agent down the *wrong branch entirely*, suppressing all downstream calls. A stale leaf value only corrupts one final output. Position matters.
+- No existing caching policy accounts for workflow structure when setting TTLs.
+
+### 2. Solution
+- **Workflow-aware TTL policy:** tighten TTLs at nodes with more downstream dependents and higher topological importance.
+- TTL formula: `TTL = base_ttl / (1 + α * downstream_deps) * position_weight`
+- Downstream dependent count and workflow step are derived automatically from the LangGraph DAG — no manual annotation.
+- Three policies compared: `none` (always fresh), `fixed_ttl` (standard baseline), `workflow_aware` (our contribution).
+
+### 3. Evaluation
+- **Workflow:** `investment_decision` — price → conditional branch (news_sentiment or trend) → buy/sell/hold
+- **Setup:** ~2000 trials per policy, 11 tickers, ground truth from simultaneous fresh API calls
+- **Metric:** mismatch rate (cached-data decision ≠ fresh-data decision)
+
+| Policy | Hit Rate | Mismatch Rate | Avg Latency |
+|---|---|---|---|
+| `none` | 0% | 0.0% | 280ms |
+| `fixed_ttl` | 79.9% | 2.7% | 79ms |
+| `workflow_aware` | 49.6% | **1.2%** | 110ms |
+
+- **2.25× fewer decision errors** vs. fixed_ttl
+- **Wrong-branch routing errors: eliminated entirely** (fixed_ttl: 27.3% of mismatches; workflow_aware: 0%)
+- Only 39% slower than fixed_ttl, 2.5× faster than no-cache
+
+### 4. Next Steps
+See [Research Roadmap](#next-steps-research-roadmap) above. Key priorities: real LLM integration, adaptive TTL learning, staleness budget formalization.
