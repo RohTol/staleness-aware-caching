@@ -234,11 +234,13 @@ The gateway policy is set on the gateway side (`GW_POLICY`). Run the agent once 
 
 ## Experimental Results
 
-Experiments were run on the `investment_decision` workflow across all 11 tickers. Each policy ran from the same starting point in the price CSV (row 0) with all mutable simulator state (trend, sentiment) reset between experiments to ensure fair comparison. ~2000 trials per policy.
+All experiments ran from the same starting point in the price CSV (row 0) with mutable simulator state reset between policies. ~2000 trials per policy per workflow.
 
-The routing threshold was calibrated to 0.5% (matching real inter-row price volatility) so that stale cached prices can actually cross the routing boundary and cause wrong-branch decisions — the most damaging failure mode in a branching workflow.
+---
 
-### Summary
+### Workflow 1: Investment Decision (branching / fan-out)
+
+11 tickers, routing threshold calibrated to 0.5% so stale prices can cross the branch boundary.
 
 | Policy | Hit Rate | Mismatch Rate | Avg Latency |
 |---|---|---|---|
@@ -246,29 +248,49 @@ The routing threshold was calibrated to 0.5% (matching real inter-row price vola
 | `fixed_ttl` | 79.9% | **2.7%** | 79ms |
 | `workflow_aware` | 49.6% | **1.2%** | 110ms |
 
-### Key Findings
+**Key findings:**
 
-**1. Workflow-aware TTL reduces decision errors by 2.25× vs. fixed TTL** (2.7% → 1.2%), while staying 2.5× faster than no-cache (110ms vs. 280ms) and retaining nearly half the cache hit rate.
+**1. Workflow-aware reduces decision errors by 2.25× vs. fixed TTL** (2.7% → 1.2%), while staying 2.5× faster than no-cache and retaining nearly half the hit rate.
 
-**2. The most damaging failure mode — wrong-branch routing — is eliminated entirely.** The workflow-aware policy tightens the price TTL at the root node (step=0, deps=3) from 20s → 6.7s. In fixed_ttl, 27.3% of all mismatches (15/55) are wrong-branch errors: a stale price crosses the routing threshold and sends the agent down the wrong branch, suppressing the correct downstream call entirely. Workflow-aware reduces this to zero.
+**2. Wrong-branch routing errors eliminated entirely.** workflow_aware tightens the price TTL at the root node (step=0, deps=3) from 20s → 6.7s. Under fixed_ttl, 27.3% of mismatches are wrong-branch errors — a stale price routes the agent to the wrong branch, suppressing the correct downstream call. Workflow-aware reduces this to zero.
 
 | Mismatch type | fixed_ttl | workflow_aware |
 |---|---|---|
 | Wrong-branch (stale price → wrong routing) | 15/55 (27.3%) | **0/24 (0.0%)** |
 | Same-branch (stale leaf value → wrong decision) | 40/55 (72.7%) | 24/24 (100%) |
 
-**3. Branch-level breakdown shows where fixed_ttl fails.** The news_sentiment branch has an 11.9% mismatch rate under fixed_ttl because most of those mismatches are wrong-branch cases — the fresh run routes to news_sentiment but the cached run (using a stale price) routes to trend, or vice versa. Workflow-aware reduces news_sentiment mismatches from 26 to 1.
+**3. Branch-level breakdown:**
 
 | Branch | fixed_ttl mismatch rate | workflow_aware mismatch rate |
 |---|---|---|
 | news_sentiment | 11.9% (26/219) | 0.5% (1/215) — **96% reduction** |
 | trend | 1.6% (29/1785) | 1.3% (23/1793) — **19% reduction** |
 
-**4. Leaf-node staleness is the remaining gap.** The 1.2% residual mismatch rate in workflow_aware comes entirely from stale trend and sentiment values at leaf nodes (step=1, deps=1), which the policy intentionally does not tighten. This is expected — the policy prioritizes freshness where blast radius is highest. Eliminating leaf-node staleness would require tighter TTLs there too, at the cost of more cache misses.
+**4. Residual 1.2% mismatches** in workflow_aware come entirely from stale leaf nodes (step=1, deps=1) — intentionally not tightened.
 
-**5. The latency tradeoff is modest.** workflow_aware is only 39% slower than fixed_ttl (110ms vs. 79ms) while eliminating 56% of its decision errors and all wrong-branch routing failures. The cost of freshness at high-fanout nodes is small.
+---
 
-**Caveat on decision distributions:** Because fixed_ttl (79ms/trial) completes trials faster than workflow_aware (110ms/trial), the two policies traverse slightly different ranges of the price CSV over the same number of trials — faster runs cover fewer price intervals in wall-clock time. This means the three policies did not see identical market conditions, and aggregate decision distributions differ across runs. The mismatch rates (correct vs. stale decision within the same run) are unaffected by this.
+### Workflow 2: Portfolio Rebalancing (fan-in)
+
+3 stocks (AAPL, GOOG, NVDA), all at step=0 with the same change rate. AAPL has 3 downstream dependents (risk + tax + decide); GOOG and NVDA have 2 (risk + decide). Decision: rebalance any stock whose price has drifted >0.5% from its reference price.
+
+| Policy | Hit Rate | Mismatch Rate | Avg Latency |
+|---|---|---|---|
+| `none` (baseline) | 0% | **0.3%** | 337ms |
+| `fixed_ttl` | 97.1% | **6.5%** | 89ms |
+| `workflow_aware` | 91.6% | **3.2%** | 111ms |
+
+**Key findings:**
+
+**1. Workflow-aware reduces mismatches 2× vs. fixed TTL** (6.5% → 3.2%), consistent with the investment_decision result despite a completely different DAG shape.
+
+**2. No wrong-branch errors by construction** — fan-in workflows have no conditional routing, so all mismatches are decision-level (stale price → wrong rebalance call per ticker). This isolates the downstream_dependents variable cleanly: the only structural difference between AAPL and GOOG/NVDA is fanout, not change rate.
+
+**3. The 2× mismatch reduction is driven by AAPL.** workflow_aware tightens AAPL's TTL more aggressively than GOOG/NVDA because it has more downstream dependents — a stale AAPL price corrupts both the risk metric and the tax computation. GOOG/NVDA staleness only corrupts the risk metric.
+
+**Caveat:** fixed_ttl hits 97.1% here (vs 79.9% on investment_decision) because portfolio rebalancing has no branching — the same three price keys are fetched every trial, so the cache warms up quickly and stays warm. The high hit rate amplifies the mismatch rate.
+
+---
 
 ### How to Reproduce
 
@@ -276,15 +298,16 @@ The routing threshold was calibrated to 0.5% (matching real inter-row price vola
 # Start the simulator (keep running throughout)
 cd api_simulator && python3 main.py
 
-# Run all three experiments automatically
-# (resets simulator to row 0 and clears all mutable state between each)
+# Investment decision (11 tickers, 3 policies)
 cd .. && bash run_experiments.sh
 
-# Analyze results
-cd agent && python3 analyze.py \
-    results/results_none_v2.csv \
-    results/results_fixed_ttl_v2.csv \
-    results/results_workflow_aware_v2.csv
+# Portfolio rebalancing (AAPL/GOOG/NVDA, 3 policies)
+bash run_portfolio_experiments.sh
+
+# Analyze
+cd agent
+python3 analyze.py results/results_none_v2.csv results/results_fixed_ttl_v2.csv results/results_workflow_aware_v2.csv
+python3 analyze.py results/port_none_v1.csv results/port_fixed_ttl_v1.csv results/port_workflow_aware_v1.csv
 ```
 
 ---
@@ -293,7 +316,6 @@ cd agent && python3 analyze.py \
 
 **Near-term validation:**
 - **Visualizations** — matplotlib charts for the mismatch rate comparison, latency tradeoff curve, and staleness duration distribution for use in slides/paper.
-- **Portfolio rebalancing experiments** — run the same policy comparison on the fan-in workflow to isolate `downstream_dependents` as the variable independent of change rate.
 
 **Longer-term research directions:**
 - **Real LLM integration** — connect to an actual LLM (Claude, GPT-4) and measure how staleness in tool results propagates through LLM reasoning chains. Current agent logic is deterministic; the interesting question is whether LLMs are more or less robust to stale inputs than deterministic decision rules.
@@ -309,7 +331,7 @@ cd agent && python3 analyze.py \
 > Structure for the CSE585 poster presentation. Required sections: abstract, motivation/problem, solution, evaluation, next steps.
 
 ### Abstract
-Caching tool call results in LLM agentic workflows reduces cost and latency, but stale cached data can silently corrupt agent decisions. We show that staleness impact is non-uniform across a workflow DAG — tool calls at high-fanout positions cause disproportionately more decision errors when stale. We design a workflow-aware TTL policy that exploits this structure, reducing decision mismatches by 2.25× over a standard fixed-TTL cache while retaining most of the latency benefit.
+Caching tool call results in LLM agentic workflows reduces cost and latency, but stale cached data can silently corrupt agent decisions. We show that staleness impact is non-uniform across a workflow DAG — tool calls at high-fanout positions cause disproportionately more decision errors when stale. We evaluate this across two workflow topologies (branching fan-out and parallel fan-in) and design a workflow-aware TTL policy that exploits DAG structure, reducing decision mismatches by ~2× over a standard fixed-TTL cache across both workflows while retaining most of the latency benefit.
 
 ### 1. Motivation / Problem
 - LLM agents make sequential tool calls (price lookups, news sentiment, trends) and cache results to reduce API cost and latency.
@@ -324,9 +346,11 @@ Caching tool call results in LLM agentic workflows reduces cost and latency, but
 - Three policies compared: `none` (always fresh), `fixed_ttl` (standard baseline), `workflow_aware` (our contribution).
 
 ### 3. Evaluation
-- **Workflow:** `investment_decision` — price → conditional branch (news_sentiment or trend) → buy/sell/hold
-- **Setup:** ~2000 trials per policy, 11 tickers, ground truth from simultaneous fresh API calls
+- **Two workflows:** `investment_decision` (branching/fan-out, 11 tickers) and `portfolio_rebalancing` (fan-in, AAPL/GOOG/NVDA)
+- **Setup:** ~2000 trials per policy per workflow, ground truth from simultaneous fresh API calls
 - **Metric:** mismatch rate (cached-data decision ≠ fresh-data decision)
+
+**Investment Decision** (branching — stale root can cause wrong routing):
 
 | Policy | Hit Rate | Mismatch Rate | Avg Latency |
 |---|---|---|---|
@@ -334,9 +358,17 @@ Caching tool call results in LLM agentic workflows reduces cost and latency, but
 | `fixed_ttl` | 79.9% | 2.7% | 79ms |
 | `workflow_aware` | 49.6% | **1.2%** | 110ms |
 
-- **2.25× fewer decision errors** vs. fixed_ttl
-- **Wrong-branch routing errors: eliminated entirely** (fixed_ttl: 27.3% of mismatches; workflow_aware: 0%)
-- Only 39% slower than fixed_ttl, 2.5× faster than no-cache
+**Portfolio Rebalancing** (fan-in — isolates downstream_dependents independent of change rate):
+
+| Policy | Hit Rate | Mismatch Rate | Avg Latency |
+|---|---|---|---|
+| `none` | 0% | 0.3% | 337ms |
+| `fixed_ttl` | 97.1% | 6.5% | 89ms |
+| `workflow_aware` | 91.6% | **3.2%** | 111ms |
+
+- **2× fewer decision errors** vs. fixed_ttl across both workflows
+- **Wrong-branch routing eliminated entirely** in investment_decision (fixed_ttl: 27.3% of mismatches were wrong-branch; workflow_aware: 0%)
+- Only ~25–39% slower than fixed_ttl, 2.5–3× faster than no-cache
 
 ### 4. Next Steps
 See [Research Roadmap](#next-steps-research-roadmap) above. Key priorities: real LLM integration, adaptive TTL learning, staleness budget formalization.
