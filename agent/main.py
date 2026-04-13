@@ -23,7 +23,6 @@ The gateway policy is set on the gateway side (GW_POLICY env var), not here.
 Run once per policy and compare the output CSVs.
 """
 
-import json
 import os
 import sys
 import time
@@ -32,8 +31,6 @@ import httpx
 
 from config import settings
 from runner import (
-    compute_metrics,
-    run_experiment,
     run_trial,
     write_csv_header,
     write_csv_row,
@@ -67,16 +64,28 @@ def _get_gateway_policy(gateway_url: str) -> str:
 
 
 def run_continuously(workflow_module, gateway_url: str, simulator_url: str,
-                     output_csv: str, max_trials: int = 0) -> None:
+                     output_csv: str, max_trials: int = 0,
+                     tickers: list[str] | None = None,
+                     ref_prices: dict[str, float] | None = None) -> None:
     """
     Loop forever (or until max_trials total trials have been recorded).
 
     Each iteration:
       1. Refresh the policy name from the gateway.
-      2. Run one trial per ticker.
+      2. Run one trial per entry in tickers.
       3. Write each result to the CSV immediately.
       4. Sleep the remainder of the 20-second interval.
+
+    tickers   — list of ticker labels to iterate each interval.
+                Defaults to TICKERS (all 11 stocks) for investment_decision.
+                Pass ["PORTFOLIO"] for portfolio_rebalancing (one trial per interval).
+    ref_prices — reference price lookup; portfolio_rebalancing ignores it (**_kwargs).
     """
+    if tickers is None:
+        tickers = TICKERS
+    if ref_prices is None:
+        ref_prices = TICKER_REFERENCE_PRICES
+
     is_new_file = not os.path.exists(output_csv)
     if is_new_file:
         write_csv_header(output_csv)
@@ -94,11 +103,11 @@ def run_continuously(workflow_module, gateway_url: str, simulator_url: str,
         policy = _get_gateway_policy(gateway_url)
         print(f"\n--- interval {interval_num} | policy={policy} ---")
 
-        for ticker in TICKERS:
+        for ticker in tickers:
             if max_trials > 0 and trial_id >= max_trials:
                 break
 
-            ref_price = TICKER_REFERENCE_PRICES.get(ticker, 180.0)
+            ref_price = ref_prices.get(ticker, 180.0)
             try:
                 result = run_trial(
                     trial_id=trial_id,
@@ -111,16 +120,16 @@ def run_continuously(workflow_module, gateway_url: str, simulator_url: str,
                 )
                 write_csv_row(result, output_csv)
                 trial_id += 1
-                match_str = "✓" if result.is_correct else "✗"
+                match_str = "OK" if result.is_correct else "XX"
                 print(
-                    f"  {ticker:<5} idx={result.interval_index:>4} "
+                    f"  {ticker:<10} idx={result.interval_index:>4} "
                     f"branch={result.branch_taken:<15} "
-                    f"fresh={result.fresh_decision:<5} "
-                    f"cached={result.cached_decision:<5} "
+                    f"fresh={result.fresh_decision:<20} "
+                    f"cached={result.cached_decision:<20} "
                     f"{match_str}  price={result.price_cache_status}"
                 )
             except Exception as e:
-                print(f"  {ticker:<5} ERROR: {e}")
+                print(f"  {ticker:<10} ERROR: {e}")
 
         elapsed = time.time() - interval_start
         sleep_time = max(0.0, INTERVAL_SECONDS - elapsed)
@@ -149,22 +158,22 @@ def main():
             output_csv=settings.output_csv,
             max_trials=settings.n_trials,
         )
-    else:
-        # Legacy batch mode for portfolio_rebalancing (or any other workflow)
-        if settings.n_trials == 0:
-            print("Set AGENT_N_TRIALS to a positive number for batch mode.", file=sys.stderr)
-            sys.exit(1)
+    elif settings.workflow == "portfolio_rebalancing":
+        # One trial per interval — the workflow tests AAPL/GOOG/MSFT internally each trial.
+        # "PORTFOLIO" is a label only; build_graph ignores the ticker arg (**_kwargs).
+        print(f"stocks     : AAPL (deps=3), GOOG (deps=2), MSFT (deps=2)")
         print()
-        results = run_experiment(
+        run_continuously(
             workflow_module,
-            n_trials=settings.n_trials,
             gateway_url=settings.gateway_url,
             simulator_url=settings.simulator_url,
+            output_csv=settings.output_csv,
+            max_trials=settings.n_trials,
+            tickers=["PORTFOLIO"],
         )
-        metrics = compute_metrics(results)
-        print()
-        print("=== metrics ===")
-        print(json.dumps(metrics, indent=2))
+    else:
+        print(f"Unknown workflow: {settings.workflow}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

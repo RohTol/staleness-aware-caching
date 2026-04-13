@@ -67,20 +67,20 @@ get_price(AAPL)  ──┬──→  compute_risk_metric(portfolio)  →  decide
                    └──→  compute_tax_liability(AAPL)      →  decide: sell timing
 get_price(GOOG)  ──┤
                    └──→  compute_risk_metric(portfolio)
-get_price(MSFT)  ──┘
+get_price(NVDA)  ──┘
                    └──→  compute_risk_metric(portfolio)
 ```
 
-`compute_risk_metric` and `compute_tax_liability` are computed by the agent from the prices — they are not external calls.
+`compute_risk_metric` and `compute_tax_liability` are computed by the agent from the prices — they are not external calls. The rebalancing decision is based on whether each stock's current price has drifted more than 0.5% from its reference price (median over the dataset). A stale cached price off by ~0.5–1% can flip the per-ticker rebalance/hold decision.
 
 **Why it's interesting:**
-- All three price calls have the same change rate, but `get_price(AAPL)` feeds two downstream computations (risk + tax) while GOOG and MSFT each feed only one (risk). So AAPL has a larger blast radius even though the change rates are identical.
+- All three price calls have the same change rate, but `get_price(AAPL)` feeds two downstream computations (risk + tax) while GOOG and NVDA each feed only one (risk). So AAPL has a larger blast radius even though the change rates are identical.
 - This is the clearest demonstration that downstream dependent count matters independently of change rate. A policy based only on change rate (like fixed TTL per tool type) gets this wrong.
 
 **Downstream dependents:**
 - `get_price(AAPL)` → 3 dependents (risk metric, tax liability, final decision)
 - `get_price(GOOG)` → 2 dependents (risk metric, final decision)
-- `get_price(MSFT)` → 2 dependents (risk metric, final decision)
+- `get_price(NVDA)` → 2 dependents (risk metric, final decision)
 
 ---
 
@@ -118,5 +118,5 @@ ELSE:
 | Workflow | Endpoints used | Key structural feature |
 |---|---|---|
 | Investment Decision | price + news_sentiment + trend | Branching suppresses downstream calls; 3 different change rates |
-| Portfolio Rebalancing | price × 3 | Same change rate, different blast radius from downstream dependent count |
+| Portfolio Rebalancing | price × 3 (AAPL, GOOG, NVDA) | Same change rate, different blast radius from downstream dependent count |
 | Weather Event | weather × 2 | Cleanest branch suppression example; easy ground truth |
