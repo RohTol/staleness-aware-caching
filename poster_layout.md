@@ -20,83 +20,81 @@
 │        ~9" wide         │          ~11" wide            │         ~9" wide          │
 │                         │                               │                           │
 │  ┌─────────────────┐    │  ┌─────────────────────────┐  │  ┌─────────────────────┐  │
-│  │  MOTIVATION     │    │  │                         │  │  │  KEY NUMBERS        │  │
-│  │                 │    │  │   ★  HERO FIGURE  ★     │  │  │                     │  │
-│  │ LLM agents make │    │  │   hero_mismatch.png     │  │  │    2.25×            │  │
-│  │ sequential tool │    │  │                         │  │  │  fewer errors       │  │
-│  │ calls; caching  │    │  │  Grouped bar chart:     │  │  │  (Investment)       │  │
-│  │ reduces cost &  │    │  │  Mismatch Rate (%) by   │  │  │                     │  │
-│  │ latency BUT…    │    │  │  Policy × Workflow      │  │  │    2.0×             │  │
-│  │                 │    │  │                         │  │  │  fewer errors       │  │
-│  │ A stale result  │    │  │  ┌───┐ ┌───┐ ┌───┐      │  │  │  (Portfolio)        │  │
-│  │ at the root     │    │  │  │   │ │   │ │   │      │  │  │                     │  │
-│  │ node sends the  │    │  │  │   │ │   │ │   │      │  │  │    0%               │  │
-│  │ agent down the  │    │  │  └───┘ └───┘ └───┘      │  │  │  wrong-branch       │  │
-│  │ wrong branch    │    │  │  none  fixed  aware     │  │  │  errors             │  │
-│  │ entirely.       │    │  │       Investment        │  │  │  (vs 27.3% fixed)   │  │
-│  │                 │    │  │                         │  │  └─────────────────────┘  │
-│  │ Existing        │    │  │  ┌───┐ ┌───┐ ┌───┐      │  │                           │
-│  │ metrics (hit    │    │  │  │   │ │   │ │   │      │  │  ┌─────────────────────┐  │
-│  │ rate, staleness │    │  │  └───┘ └───┘ └───┘      │  │  │  BRANCH BREAKDOWN   │  │
-│  │ age) don't      │    │  │  none  fixed  aware     │  │  │  branch_breakdown   │  │
-│  │ capture this.   │    │  │       Portfolio         │  │  │  .png               │  │
-│  └─────────────────┘    │  │                         │  │  │                     │  │
-│                         │  │  ↑ "2.25× fewer errors" │  │  │  news_sentiment:    │  │
-│  ┌─────────────────┐    │  │  ↑ "2.0× fewer errors"  │  │  │  fixed → 11.9%     │  │
-│  │ SYSTEM ARCH     │    │  └─────────────────────────┘  │  │  aware →  0.5%     │  │
-│  │                 │    │                               │  │         (96% less)  │  │
-│  │  ┌───────────┐  │    │  ┌─────────────────────────┐  │  │                     │  │
-│  │  │LangGraph  │  │    │  │ LATENCY-CORRECTNESS     │  │  │  trend branch:      │  │
-│  │  │  Agent    │  │    │  │ TRADEOFF                │  │  │  fixed → 1.6%      │  │
-│  │  └─────┬─────┘  │    │  │ latency_tradeoff.png    │  │  │  aware → 1.3%      │  │
-│  │        ↓        │    │  │                         │  │  │         (19% less)  │  │
-│  │  ┌─────┴─────┐  │    │  │  Correctness % ↑        │  │  └─────────────────────┘  │
-│  │  │   Cache   │  │    │  │    · none               │  │                           │
-│  │  │  Gateway  │  │    │  │      · workflow_aware   │  │  ┌─────────────────────┐  │
-│  │  │ (policy)  │  │    │  │          · fixed_ttl    │  │  │  RESULTS TABLES     │  │
-│  │  └─────┬─────┘  │    │  │  Latency (ms) ──→       │  │  │                     │  │
-│  │        ↓        │    │  └─────────────────────────┘  │  │ Investment:         │  │
-│  │  ┌─────┴─────┐  │    │                               │  │ Policy|Hit |  MM    │  │
-│  │  │    API    │  │    │  ┌─────────────────────────┐  │  │ none  | 0% | 0.0%  │  │
-│  │  │Simulator  │  │    │  │ HIT RATE ≠ CORRECTNESS  │  │  │ fixed |80% | 2.7%  │  │
-│  │  └───────────┘  │    │  │ hit_rate_disconnect.png │  │  │ aware |50% | 1.2%  │  │
-│  └─────────────────┘    │  │                         │  │  │                     │  │
-│                         │  │  Mismatch% ↑            │  │  │ Portfolio:          │  │
-│  ┌─────────────────┐    │  │     ← Portfolio         │  │  │ Policy|Hit |  MM    │  │
-│  │ WORKFLOW 1      │    │  │       fixed_ttl:         │  │  │ none  | 0% | 0.3%  │  │
-│  │ Investment DAG  │    │  │       97% hits but       │  │  │ fixed |97% | 6.5%  │  │
-│  │                 │    │  │       6.5% errors!       │  │  │ aware |92% | 3.2%  │  │
-│  │  [get_price]    │    │  │  Hit Rate% ──→           │  │  └─────────────────────┘  │
-│  │  ↙ 3 deps ↓     │    │  └─────────────────────────┘  │                           │
-│  │ [sentiment]     │    │                               │  ┌─────────────────────┐  │
-│  │  1 dep [trend]  │    │                               │  │  CONCLUSION         │  │
-│  │        1 dep    │    │                               │  │                     │  │
-│  │   ↓        ↓    │    │                               │  │ • DAG position      │  │
-│  │ [decide] [dec]  │    │                               │  │   matters more than │  │
-│  └─────────────────┘    │                               │  │   change rate alone │  │
-│                         │                               │  │                     │  │
-│  ┌─────────────────┐    │                               │  │ • 2× fewer errors   │  │
-│  │ WORKFLOW 2      │    │                               │  │   with only ~40%    │  │
-│  │ Portfolio DAG   │    │                               │  │   extra latency     │  │
-│  │                 │    │                               │  │                     │  │
-│  │ [AAPL] 3 deps   │    │                               │  │ • Hit rate is a     │  │
-│  │  ↓↓↓            │    │                               │  │   poor proxy for    │  │
-│  │ [risk][tax]     │    │                               │  │   decision          │  │
-│  │ [GOOG] 2 deps   │    │                               │  │   correctness       │  │
-│  │  ↓↓             │    │                               │  └─────────────────────┘  │
+│  │ PROBLEM &       │    │  │  ★  HERO FIGURE  ★      │  │  │ BRANCH BREAKDOWN    │  │
+│  │ CONTRIBUTION    │    │  │  hero_mismatch.png       │  │  │ branch_breakdown    │  │
+│  │                 │    │  │                          │  │  │ .png                │  │
+│  │ LLM agents make │    │  │  ┌───┐ ┌───┐ ┌───┐       │  │  │                     │  │
+│  │ sequential tool │    │  │  │   │ │   │ │   │       │  │  │ news_sentiment:     │  │
+│  │ calls; caching  │    │  │  └───┘ └───┘ └───┘       │  │  │ fixed → 11.9%      │  │
+│  │ reduces cost &  │    │  │  none  fixed  aware      │  │  │ aware →  0.5%      │  │
+│  │ latency BUT…    │    │  │       Investment         │  │  │ ★ 96% reduction     │  │
+│  │                 │    │  │                          │  │  │                     │  │
+│  │ A stale root    │    │  │  ┌───┐ ┌───┐ ┌───┐       │  │  │ trend branch:       │  │
+│  │ node sends the  │    │  │  └───┘ └───┘ └───┘       │  │  │ fixed → 1.6%       │  │
+│  │ agent down the  │    │  │  none  fixed  aware      │  │  │ aware → 1.3%       │  │
+│  │ wrong branch.   │    │  │       Portfolio          │  │  │ 19% reduction       │  │
+│  │                 │    │  │                          │  │  └─────────────────────┘  │
+│  │ Existing metrics│    │  │  ↑ "2.25× fewer errors"  │  │                           │
+│  │ (hit rate,      │    │  │  ↑ "2.0× fewer errors"   │  │  ┌─────────────────────┐  │
+│  │ staleness age)  │    │  └─────────────────────────┘  │  │  RESULTS            │  │
+│  │ miss this.      │    │                               │  │                     │  │
+│  │                 │    │  ┌─────────────────────────┐  │  │ Investment:         │  │
+│  │ We show:        │    │  │ LATENCY-CORRECTNESS      │  │  │ Policy|Hit |  MM   │  │
+│  │ staleness impact│    │  │ TRADEOFF                 │  │  │ none  | 0% | 0.0% │  │
+│  │ depends on DAG  │    │  │ latency_tradeoff.png     │  │  │ fixed |80% | 2.7% │  │
+│  │ position.       │    │  │                          │  │  │ aware |50% | 1.2% │  │
+│  └─────────────────┘    │  │  Correctness% ↑          │  │  │                     │  │
+│                         │  │    · none                │  │  │ Portfolio:          │  │
+│  ┌─────────────────┐    │  │      · workflow_aware    │  │  │ Policy|Hit |  MM   │  │
+│  │ SYSTEM ARCH     │    │  │          · fixed_ttl     │  │  │ none  | 0% | 0.3% │  │
+│  │                 │    │  │  Latency (ms) ──→        │  │  │ fixed |97% | 6.5% │  │
+│  │  ┌───────────┐  │    │  │                          │  │  │ aware |92% | 3.2% │  │
+│  │  │LangGraph  │  │    │  │  ↑ "2.5× faster than    │  │  └─────────────────────┘  │
+│  │  │  Agent    │  │    │  │     no-cache w/ only     │  │                           │
+│  │  └─────┬─────┘  │    │  │     ~40% more latency    │  │  ┌─────────────────────┐  │
+│  │        ↓        │    │  │     vs fixed_ttl"        │  │  │  CONCLUSION         │  │
+│  │  ┌─────┴─────┐  │    │  └─────────────────────────┘  │  │                     │  │
+│  │  │   Cache   │  │    │                               │  │ • DAG position       │  │
+│  │  │  Gateway  │  │    │  ┌─────────────────────────┐  │  │   matters more than  │  │
+│  │  │ (policy)  │  │    │  │ HIT RATE ≠ CORRECTNESS  │  │  │   change rate alone  │  │
+│  │  └─────┬─────┘  │    │  │ hit_rate_disconnect.png │  │  │                     │  │
+│  │        ↓        │    │  │                          │  │ • 2× fewer errors     │  │
+│  │  ┌─────┴─────┐  │    │  │  Mismatch% ↑            │  │  │   with ~40% extra    │  │
+│  │  │    API    │  │    │  │  ← Portfolio fixed_ttl:  │  │  │   latency           │  │
+│  │  │Simulator  │  │    │  │    97% hits, 6.5% errors │  │  │                     │  │
+│  │  └───────────┘  │    │  │  Hit Rate% ──→           │  │ • Hit rate is a poor  │  │
+│  │                 │    │  │                          │  │  │   proxy for          │  │
+│  │ APIs: price,    │    │  │  ↑ "High hit rate does   │  │  │   correctness        │  │
+│  │ trend, weather, │    │  │     not mean correct     │  │  └─────────────────────┘  │
+│  │ news_sentiment  │    │  │     decisions"           │  │                           │
+│  └─────────────────┘    │  └─────────────────────────┘  │  ┌─────────────────────┐  │
+│                         │                               │  │  NEXT STEPS         │  │
+│  ┌─────────────────┐    │  ┌─────────────────────────┐  │  │                     │  │
+│  │ WORKFLOW 1      │    │  │ TTL FORMULA              │  │ • Real LLM            │  │
+│  │ Investment DAG  │    │  │                          │  │  │   integration        │  │
+│  │                 │    │  │  TTL =                   │  │ • Adaptive TTL         │  │
+│  │  [get_price]    │    │  │   base_ttl /             │  │  │   learning           │  │
+│  │  ↙ 3 deps ↓     │    │  │  (dep_factor ×           │  │ • Multi-agent          │  │
+│  │ [sentiment]     │    │  │   pos_weight)            │  │  │   cache sharing      │  │
+│  │  1 dep [trend]  │    │  │                          │  │  └─────────────────────┘  │
+│  │        1 dep    │    │  │  dep_factor =            │  │                           │
+│  │   ↓        ↓    │    │  │   log₂(1 + deps)         │  │                           │
+│  │ [decide] [dec]  │    │  │                          │  │                           │
+│  └─────────────────┘    │  │  pos_weight = 1.5        │  │                           │
+│                         │  │   if step == 0           │  │                           │
+│  ┌─────────────────┐    │  │   else 1.0               │  │                           │
+│  │ WORKFLOW 2      │    │  │                          │  │                           │
+│  │ Portfolio DAG   │    │  │  TTL floor =             │  │                           │
+│  │                 │    │  │   0.2 × base_ttl         │  │                           │
+│  │ [AAPL] 3 deps   │    │  └─────────────────────────┘  │                           │
+│  │  ↓↓↓            │    │                               │                           │
+│  │ [risk][tax]     │    │                               │                           │
+│  │ [GOOG] 2 deps   │    │                               │                           │
+│  │  ↓↓             │    │                               │                           │
 │  │ [risk]          │    │                               │                           │
-│  │ [NVDA] 2 deps   │    │                               │  ┌─────────────────────┐  │
-│  │  ↓↓             │    │                               │  │  FUTURE WORK        │  │
-│  │ [risk] ──→[dec] │    │                               │  │                     │  │
-│  └─────────────────┘    │                               │  │ • Real LLM          │  │
-│                         │                               │  │   integration       │  │
-│  ┌─────────────────┐    │                               │  │ • Adaptive TTL      │  │
-│  │ POLICY FORMULA  │    │                               │  │   learning          │  │
-│  │                 │    │                               │  │ • Multi-agent       │  │
-│  │  TTL =          │    │                               │  │   cache sharing     │  │
-│  │   base_ttl /    │    │                               │  └─────────────────────┘  │
-│  │  (1 + α×deps)   │    │                               │                           │
-│  │   × pos_weight  │    │                               │                           │
+│  │ [NVDA] 2 deps   │    │                               │                           │
+│  │  ↓↓             │    │                               │                           │
+│  │ [risk] ──→[dec] │    │                               │                           │
 │  └─────────────────┘    │                               │                           │
 └─────────────────────────┴───────────────────────────────┴───────────────────────────┘
 
@@ -120,18 +118,18 @@
 
 ### Left Column (~9" wide)
 
-**Motivation (~8")**  
-Key points (bullet or short paragraph):
+**Problem & Contribution (~8")**
 - LLM agents call tools (price APIs, news feeds, etc.) sequentially to answer queries
 - Caching reduces latency and API costs — but stale data corrupts multi-step reasoning
-- A stale root-node result can route the agent down the wrong branch entirely, making all downstream calls useless
-- Existing caching metrics (hit rate, staleness age) fail to capture decision correctness
+- A stale root-node result can route the agent down the wrong branch entirely
+- Existing metrics (hit rate, staleness age) don't capture decision correctness
+- We show: staleness impact depends on DAG position, and a workflow-aware TTL policy exploits this
 
-**System Architecture (~6")**  
-Three-box Canva diagram: `LangGraph Agent` → `Cache Gateway (policy plug-in)` → `API Simulator`
+**System Architecture (~6")**
+Three-box diagram: `LangGraph Agent` → `Cache Gateway (policy plug-in)` → `API Simulator`  
+Label the four APIs: `price`, `trend`, `weather`, `news_sentiment`
 
-**Workflow 1: Investment Decision DAG (~7")**  
-Create in Canva with rounded-rect nodes + arrows:
+**Workflow 1: Investment Decision DAG (~7")**
 ```
        [get_price(ticker)]   ← 3 downstream deps → tighter TTL
               ↓
@@ -142,8 +140,7 @@ Create in Canva with rounded-rect nodes + arrows:
  [SELL/HOLD]         [BUY/SELL/HOLD]
 ```
 
-**Workflow 2: Portfolio Rebalancing DAG (~7")**  
-Create in Canva:
+**Workflow 2: Portfolio Rebalancing DAG (~7")**
 ```
 [get_price(AAPL)] ──→ [compute_risk] ──┐
         └──────────→ [compute_tax]  ──→ [decide]  (AAPL: 3 deps)
@@ -151,62 +148,84 @@ Create in Canva:
 [get_price(NVDA)] ──→ [compute_risk] ──→ [decide] (NVDA: 2 deps)
 ```
 
-**Policy Formula (~3")**  
-Styled formula box:
-```
-TTL = base_ttl / (1 + α × downstream_deps) × position_weight
-```
+---
+
+### Center Column (~11" wide)
+
+**Figure 1 — Hero: Mismatch Rate Comparison** (`hero_mismatch.png`, ~14")
+
+*Callout above or below:* **"2.25× fewer errors (Investment) · 2.0× fewer errors (Portfolio)"**
+
+Explanation (2–3 sentences): Mismatch rate = cached-data decision ≠ fresh-data decision. Both workflows use the same base TTLs — the only difference is whether the policy is blind to DAG structure or not. Workflow-aware cuts errors by ~2× in both despite fundamentally different topologies.
 
 ---
 
-### Center Column (~11" wide) — Hero
+**Figure 2 — Latency-Correctness Tradeoff** (`latency_tradeoff.png`, ~9")
 
-**Figure 1 — Hero: Mismatch Rate Comparison** (`hero_mismatch.png`, ~16")  
-Workflow-aware TTL cuts decision errors by **2.25×** on Investment Decision (2.7% → 1.2%) and **2.0×** on Portfolio Rebalancing (6.5% → 3.2%). The improvement is consistent across both workflows despite their fundamentally different topologies (branching fan-out vs. parallel fan-in), suggesting the insight generalizes.
+*Callout:* **"2.5× faster than no-cache, ~40% more latency than fixed TTL"**
 
-**Figure 2 — Latency-Correctness Tradeoff** (`latency_tradeoff.png`, ~9")  
-Workflow-aware is only ~25–39% slower than fixed TTL (110ms vs. 79–89ms) while achieving ~2× fewer decision errors. It dominates fixed TTL on correctness with modest latency cost, and is 2.5–3× faster than no-cache while sacrificing minimal correctness.
+Explanation (2 sentences): Workflow-aware sits in the sweet spot — far better correctness than fixed TTL at modest latency cost. It doesn't need to go all the way to no-cache to recover most of the accuracy.
 
-**Figure 3 — Hit Rate ≠ Correctness** (`hit_rate_disconnect.png`, ~8")  
-Portfolio fixed TTL achieves a 97.1% cache hit rate — yet still produces a 6.5% decision error rate. High hit rate does not imply correct decisions in multi-step agentic workflows. This challenges the assumption that optimizing for hit rate is a proxy for optimizing agent quality.
+---
+
+**Figure 3 — Hit Rate ≠ Correctness** (`hit_rate_disconnect.png`, ~8")
+
+*Callout:* **"97% hit rate → 6.5% decision errors (Portfolio fixed TTL)"**
+
+Explanation (2 sentences): A high cache hit rate does not imply correct agent decisions in multi-step workflows. Optimizing for hit rate is the wrong objective — a cache can be nearly always hitting and still corrupt the majority of decisions where it matters.
+
+---
+
+**TTL Formula (~4")**
+
+Styled formula box:
+```
+TTL = base_ttl / (dep_factor × pos_weight)
+
+dep_factor = log₂(1 + downstream_deps)
+pos_weight = 1.5 if workflow_step == 0, else 1.0
+TTL floor  = 0.2 × base_ttl
+```
+One-line gloss: *Earlier nodes with more dependents get shorter TTLs — staleness there does the most damage.*
 
 ---
 
 ### Right Column (~9" wide)
 
-**Key Numbers (~8")**  
-Big-number callout blocks (styled in Canva):
-- **2.25×** fewer decision errors (Investment Decision)
-- **2.0×** fewer decision errors (Portfolio Rebalancing)
-- **0%** wrong-branch errors with workflow-aware (vs. 27.3% of all mismatches with fixed TTL)
+**Figure 4 — Branch Breakdown** (`branch_breakdown.png`, ~9")
 
-**Figure 4 — Branch Breakdown** (`branch_breakdown.png`, ~7")  
-On the news_sentiment branch (routed through the high-fanout root node), workflow-aware reduces mismatches from 11.9% → 0.5% — a **96% reduction** — by tightening the TTL at the stale price node. On the trend branch (same root, different threshold), the reduction is a smaller **19%** (1.6% → 1.3%) since the price must move more to cause a mis-route. Wrong-branch errors are eliminated entirely (0% vs. 27.3% of all fixed-TTL mismatches).
+*Callout:* **"96% reduction on news_sentiment branch · wrong-branch errors eliminated entirely"**
 
-**Results Tables (~8")**
+Explanation (2–3 sentences): Both branches route through the same stale root price node, but the news_sentiment branch has a tighter routing threshold — smaller price deviations cause wrong routing. Workflow-aware tightens the price TTL at the root, eliminating wrong-branch errors entirely. The trend branch sees a smaller gain (19%) because the threshold is looser.
+
+---
+
+**Results (~9")**
 
 Investment Decision:
 | Policy | Hit Rate | Mismatch Rate | Avg Latency |
 |---|---|---|---|
 | No Cache | 0% | 0.0% | 280ms |
 | Fixed TTL | 79.9% | 2.7% | 79ms |
-| Workflow-Aware | 49.6% | 1.2% | 110ms |
+| Workflow-Aware | 49.6% | **1.2%** | 110ms |
 
 Portfolio Rebalancing:
 | Policy | Hit Rate | Mismatch Rate | Avg Latency |
 |---|---|---|---|
 | No Cache | 0% | 0.3% | 337ms |
 | Fixed TTL | 97.1% | 6.5% | 89ms |
-| Workflow-Aware | 91.6% | 3.2% | 111ms |
+| Workflow-Aware | 91.6% | **3.2%** | 111ms |
 
-**Conclusion (~5")**
+---
+
+**Conclusion (~4")**
 - Staleness impact is non-uniform — DAG position matters more than change rate alone
-- Workflow-aware TTL reduces decision errors by ~2× with only ~40% latency overhead
-- High hit rate is a poor proxy for correctness in agentic workflows
+- Workflow-aware TTL reduces decision errors by ~2× with only ~40% latency overhead vs. fixed TTL
+- Hit rate is a poor proxy for correctness in agentic workflows
 
-**Future Work (~4")**
+**Next Steps (~4")**
 - Real LLM integration (currently uses deterministic decision rules)
-- Adaptive TTL learning (currently hand-tuned)
+- Adaptive TTL learning (currently hand-tuned per workflow)
 - Multi-agent cache sharing analysis
 
 ---
