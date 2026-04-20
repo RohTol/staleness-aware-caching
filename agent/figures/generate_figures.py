@@ -284,43 +284,76 @@ def fig_hit_rate_disconnect():
 # ===========================================================================
 # Figure 4 — Branch-Level Breakdown (investment decision only)
 # ===========================================================================
+def error_type_breakdown(rows: list[dict]) -> dict:
+    """Return counts of wrong-branch vs same-branch mismatches."""
+    wrong_branch = sum(
+        1 for r in rows
+        if r["matched"] == "False" and r["cached_branch_taken"] != r["branch_taken"]
+    )
+    same_branch = sum(
+        1 for r in rows
+        if r["matched"] == "False" and r["cached_branch_taken"] == r["branch_taken"]
+    )
+    total = len(rows)
+    return {
+        "wrong_branch":      wrong_branch,
+        "same_branch":       same_branch,
+        "wrong_branch_rate": wrong_branch / total * 100,
+        "same_branch_rate":  same_branch  / total * 100,
+    }
+
+
 def fig_branch_breakdown():
     fixed_rows = inv_data["Fixed TTL"]
     aware_rows = inv_data["Workflow-Aware"]
 
-    fixed_br = branch_mismatch(fixed_rows)
-    aware_br = branch_mismatch(aware_rows)
+    fixed_et = error_type_breakdown(fixed_rows)
+    aware_et = error_type_breakdown(aware_rows)
 
-    # Only the two meaningful branches
-    branches        = ["news_sentiment", "trend"]
-    branch_labels   = ["news_sentiment\nbranch", "trend\nbranch"]
-
-    fixed_vals = [fixed_br[b]["mismatch_rate"] * 100 for b in branches]
-    aware_vals = [aware_br[b]["mismatch_rate"] * 100 for b in branches]
+    policies      = ["Fixed TTL", "Workflow-Aware"]
+    wrong_vals    = [fixed_et["wrong_branch_rate"], aware_et["wrong_branch_rate"]]
+    same_vals     = [fixed_et["same_branch_rate"],  aware_et["same_branch_rate"]]
+    colors_wrong  = [UM_MAIZE, UM_MAIZE]
+    colors_same   = [UM_BLUE,  UM_BLUE]
 
     fig, ax = plt.subplots(figsize=(7.5, 5.0))
-    x      = np.array([0.0, 1.0])
-    bar_w  = 0.3
+    x     = np.array([0.0, 1.0])
+    bar_w = 0.45
 
-    b_fixed = ax.bar(x - bar_w / 2, fixed_vals, bar_w,
+    b_wrong = ax.bar(x, wrong_vals, bar_w,
+                     color=RED_ACCENT, edgecolor="white", linewidth=1.2,
+                     label="Wrong-branch routing", zorder=3)
+    b_same  = ax.bar(x, same_vals, bar_w,
+                     bottom=wrong_vals,
                      color=UM_MAIZE, edgecolor="white", linewidth=1.2,
-                     label="Fixed TTL", zorder=3)
-    b_aware = ax.bar(x + bar_w / 2, aware_vals, bar_w,
-                     color=UM_BLUE, edgecolor="white", linewidth=1.2,
-                     label="Workflow-Aware", zorder=3)
+                     label="Same-branch wrong decision", zorder=3)
 
-    for bar, val in zip(list(b_fixed) + list(b_aware), fixed_vals + aware_vals):
-        ax.text(bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.1,
-                f"{val:.1f}%",
-                ha="center", va="bottom", fontsize=11, fontweight="bold")
+    # label each segment
+    for bar, val in zip(b_wrong, wrong_vals):
+        if val > 0.05:
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    val / 2,
+                    f"{val:.1f}%",
+                    ha="center", va="center", fontsize=11, fontweight="bold", color="white")
+
+    for bar, bot, val in zip(b_same, wrong_vals, same_vals):
+        if val > 0.05:
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    bot + val / 2,
+                    f"{val:.1f}%",
+                    ha="center", va="center", fontsize=11, fontweight="bold", color=UM_BLUE)
+
+    # total mismatch label on top
+    for i, (w, s) in enumerate(zip(wrong_vals, same_vals)):
+        ax.text(x[i], w + s + 0.1, f"{w+s:.1f}%",
+                ha="center", va="bottom", fontsize=12, fontweight="bold")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(branch_labels, fontsize=13)
-    ax.set_ylabel("Decision Mismatch Rate (%)", fontsize=13)
-    ax.set_ylim(0, max(fixed_vals) * 1.35)
+    ax.set_xticklabels(policies, fontsize=14, fontweight="bold")
+    ax.set_ylabel("Mismatch Rate (%)", fontsize=13)
+    ax.set_ylim(0, max(f + s for f, s in zip(wrong_vals, same_vals)) * 1.35)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1f}%"))
-    ax.set_title("Per-Branch Mismatch: Investment Decision Workflow",
+    ax.set_title("Mismatch Cause: Wrong-Branch Routing vs. Stale Decision",
                  fontsize=13, fontweight="bold", pad=10)
     ax.grid(axis="y", linestyle="--", alpha=0.4, zorder=0)
     ax.legend(fontsize=12, framealpha=0.9)

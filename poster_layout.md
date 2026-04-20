@@ -192,11 +192,23 @@ One-line gloss: *Earlier nodes with more dependents get shorter TTLs — stalene
 
 ### Right Column (~9" wide)
 
-**Figure 4 — Branch Breakdown** (`branch_breakdown.png`, ~9")
+**Experiment Setup (~5")**
 
-*Callout:* **"96% reduction on news_sentiment branch · wrong-branch errors eliminated entirely"**
+- Each trial runs the workflow twice: once through the cache (gateway), once direct to the API (ground truth)
+- Final decisions (`BUY/SELL/HOLD`) are compared — a disagreement is a **mismatch**
+- ~2000 trials per policy, same price sequence replayed across all three policies for fair comparison
+- Three policies tested: no cache, fixed TTL, workflow-aware TTL
+- Primary metric: **mismatch rate** — the fraction of trials where caching produced a wrong decision
 
-Explanation (2–3 sentences): Both branches route through the same stale root price node, but the news_sentiment branch has a tighter routing threshold — smaller price deviations cause wrong routing. Workflow-aware tightens the price TTL at the root, eliminating wrong-branch errors entirely. The trend branch sees a smaller gain (19%) because the threshold is looser.
+---
+
+**Figure 4 — Error Type Breakdown** (`branch_breakdown.png`, ~9")
+
+*Callout:* **"Wrong-branch routing eliminated entirely"**
+
+- **Fixed TTL produces two error types: wrong-branch routing (0.7%) and same-branch wrong decisions (2.0%).** Wrong-branch routing happens when a stale price crosses the 0.5% threshold in the wrong direction, sending the agent down the wrong path entirely.
+- **Workflow-aware eliminates wrong-branch routing entirely and halves same-branch errors.** Tightening `fetch_price` TTL (3 deps, root) prevents stale prices from mis-firing the branch condition. Tightening `news_sentiment` TTL reduces within-branch errors.
+- **Same-branch errors persist under both policies** because sentiment can still go stale within a TTL window — but at a much lower rate.
 
 ---
 
