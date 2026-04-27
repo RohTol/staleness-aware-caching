@@ -2,6 +2,27 @@
 
 **Archit Kumar · Maaz Hussain · Divya Pothavajhyula · Rohan Tolani**
 
+---
+
+## Table of Contents
+
+- [Abstract](#abstract)
+- [Overview](#overview)
+- [Contributions](#contributions)
+- [Components](#components)
+  - [1. API Simulator](#1-api-simulator-api_simulator)
+  - [2. Cache Gateway](#2-cache-gateway-cache_gateway)
+  - [3. LangGraph Agent](#3-langgraph-agent-agent)
+- [Experimental Results](#experimental-results)
+  - [Setup](#setup)
+  - [How to Reproduce](#how-to-reproduce)
+  - [Workflow 1: Investment Decision](#workflow-1-investment-decision-branching-fan-out)
+  - [Workflow 2: Portfolio Rebalancing](#workflow-2-portfolio-rebalancing-parallel-fan-in)
+  - [Latency–Correctness Tradeoff](#latencycorrectness-tradeoff)
+- [Running a Single Policy Manually](#running-a-single-policy-manually)
+- [Discussion and Limitations](#discussion-and-limitations)
+- [Future Work](#future-work)
+- [Repository Structure](#repository-structure)
 
 ---
 
