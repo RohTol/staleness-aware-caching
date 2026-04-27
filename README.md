@@ -261,6 +261,11 @@ cd agent
 
 Both scripts automatically start/stop the gateway per policy, call `/reset` between policies to replay the same price sequence, and run `analyze.py` when all three policies finish.
 
+**Note:** The repo includes pre-committed result CSVs (`_v2` / `_v1`). If you want to run fresh experiments without overwriting them, set a new suffix:
+```bash
+SUFFIX=v3 bash run_experiments.sh
+```
+
 **Script env vars:**
 
 | Variable | Script | Default | Effect |
@@ -270,7 +275,7 @@ Both scripts automatically start/stop the gateway per policy, call `/reset` betw
 
 For a faster test run:
 ```bash
-TARGET_ROWS=500 bash run_experiments.sh
+TARGET_ROWS=500 SUFFIX=v3 bash run_experiments.sh
 ```
 
 ## Running a Single Policy Manually
