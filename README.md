@@ -23,9 +23,9 @@ LangGraph Agent  →  Cache Gateway  →  API Simulator
  call nodes)
 
 POST /v1/tools/invoke    HIT / MISS      GET /price?ticker=
-{tool, args,             STALE / FRESH   GET /weather?city=
+{tool, args,             STALE / FRESH   GET /news_sentiment?ticker=
  workflow_step,                          GET /trend?ticker=
- downstream_deps}                        GET /news_sentiment?ticker=
+ downstream_deps}                        
 ```
 
 The **LangGraph Agent** defines each task as a DAG of tool-call nodes. `workflow_step` and `downstream_dependents` are derived automatically from the graph structure — no manual annotation required.
@@ -55,7 +55,6 @@ A FastAPI server mimicking dynamic external tool APIs. Values change continuousl
 - `GET /price?ticker=<ticker>` — current stock price (~1 change per 20s)
 - `GET /news_sentiment?ticker=<ticker>` — sentiment score in [-1, 1] (~1 change per 50s)
 - `GET /trend?ticker=<ticker>` — 30-day moving average (~1 change per 15 min)
-- `GET /weather?city=<city>` — current temperature (~1 change per 3 min)
 - `GET /health` — liveness check
 - `GET /reset` — restart price replay from row 0
 
@@ -75,7 +74,7 @@ A FastAPI server mimicking dynamic external tool APIs. Values change continuousl
 | File | Description |
 |---|---|
 | `config.py` | All configurable knobs as `SIM_*` env vars. Change rates, latency params, error rate, rate limit. |
-| `state.py` | Per-key state and background Poisson update loop. Prices use multiplicative random walk; weather uses additive drift. |
+| `state.py` | Per-key state and background Poisson update loop. Prices use multiplicative random walk; |
 | `main.py` | FastAPI app. Injects lognormal latency and 2% random 503 errors. Token-bucket rate limiter when enabled. |
 
 **Key config vars:**
@@ -84,7 +83,6 @@ A FastAPI server mimicking dynamic external tool APIs. Values change continuousl
 |---|---|---|
 | `SIM_PRICE_CHANGE_RATE` | `0.05` | ~1 price change per 20s |
 | `SIM_SENTIMENT_CHANGE_RATE` | `0.02` | ~1 sentiment change per 50s |
-| `SIM_WEATHER_CHANGE_RATE` | `0.005` | ~1 weather change per 3 min |
 | `SIM_TREND_CHANGE_RATE` | `0.001` | ~1 trend change per 15 min |
 | `SIM_ERROR_RATE` | `0.02` | 2% of requests return 503 |
 
