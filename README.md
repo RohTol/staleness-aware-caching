@@ -246,8 +246,8 @@ agent/venv/bin/pip install -r api_simulator/requirements.txt
 # 1. Start the simulator (keep running throughout)
 cd api_simulator && python3 main.py
 
-# 2. Investment decision (11 tickers, 3 policies, ~2000 trials each)
-cd .. && bash run_experiments.sh
+# 2. (In a new terminal) Investment decision (11 tickers, 3 policies, ~2000 trials each)
+bash run_experiments.sh
 
 # 3. Portfolio rebalancing (AAPL/GOOG/NVDA, 3 policies)
 bash run_portfolio_experiments.sh
