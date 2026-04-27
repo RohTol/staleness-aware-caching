@@ -81,7 +81,7 @@ A FastAPI server mimicking dynamic external tool APIs. Values change continuousl
 | File | Description |
 |---|---|
 | `config.py` | All configurable knobs as `SIM_*` env vars. Change rates, latency params, error rate, rate limit. |
-| `state.py` | Per-key state and background Poisson update loop. Prices use multiplicative random walk; |
+| `state.py` | Per-key state and background Poisson update loop. Prices use multiplicative random walk. |
 | `main.py` | FastAPI app. Injects lognormal latency and 2% random 503 errors. Token-bucket rate limiter when enabled. |
 
 **Key config vars:**
@@ -231,14 +231,13 @@ Fixed_ttl is 39% faster than workflow_aware but inflicts 2× more errors. Workfl
 
 ## Setup
 
-Create the shared venv the experiment scripts rely on (run once after cloning):
+Create the shared venv the experiment scripts rely on (run once after cloning, from the repo root):
 
 ```bash
-cd agent
-python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
-cd ../cache_gateway && ../agent/venv/bin/pip install -r requirements.txt
-cd ../api_simulator && ../agent/venv/bin/pip install -r requirements.txt
+python3 -m venv agent/venv
+agent/venv/bin/pip install -r agent/requirements.txt
+agent/venv/bin/pip install -r cache_gateway/requirements.txt
+agent/venv/bin/pip install -r api_simulator/requirements.txt
 ```
 
 ## How to Reproduce
@@ -298,7 +297,7 @@ AGENT_WORKFLOW=investment_decision AGENT_OUTPUT_CSV=results/test.csv ./venv/bin/
 ## Repository Structure
 
 ```
-cse-585-project/
+staleness-aware-caching/
 ├── api_simulator/          # Dynamic API backend (FastAPI, port 8001)
 │   ├── main.py
 │   ├── state.py
@@ -318,6 +317,5 @@ cse-585-project/
 │   ├── results/            # CSV outputs from experiment runs
 │   └── figures/            # Generated plots
 ├── run_experiments.sh          # Investment decision: all 3 policies
-├── run_portfolio_experiments.sh  # Portfolio rebalancing: all 3 policies
-└── CSE_585_Final_Paper.pdf     # Full paper
+└── run_portfolio_experiments.sh  # Portfolio rebalancing: all 3 policies
 ```
