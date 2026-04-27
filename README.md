@@ -8,20 +8,17 @@
 
 - [Abstract](#abstract)
 - [Overview](#overview)
-- [Contributions](#contributions)
 - [Components](#components)
   - [1. API Simulator](#1-api-simulator-api_simulator)
   - [2. Cache Gateway](#2-cache-gateway-cache_gateway)
   - [3. LangGraph Agent](#3-langgraph-agent-agent)
 - [Experimental Results](#experimental-results)
-  - [Setup](#setup)
-  - [How to Reproduce](#how-to-reproduce)
   - [Workflow 1: Investment Decision](#workflow-1-investment-decision-branching-fan-out)
   - [Workflow 2: Portfolio Rebalancing](#workflow-2-portfolio-rebalancing-parallel-fan-in)
   - [Latency–Correctness Tradeoff](#latencycorrectness-tradeoff)
+- [Setup](#setup)
+- [How to Reproduce](#how-to-reproduce)
 - [Running a Single Policy Manually](#running-a-single-policy-manually)
-- [Discussion and Limitations](#discussion-and-limitations)
-- [Future Work](#future-work)
 - [Repository Structure](#repository-structure)
 
 ---
@@ -52,15 +49,6 @@ The **LangGraph Agent** defines each task as a DAG of tool-call nodes. `workflow
 The **Cache Gateway** intercepts every tool call, checks the in-memory cache, and applies one of three pluggable policies. The active policy is selected at startup via `GW_POLICY`.
 
 The **API Simulator** mimics real dynamic APIs: values evolve via a Poisson background loop, prices replay from a CSV for reproducibility, and every response includes `version`/`last_changed_at` for ground-truth staleness tracking.
-
----
-
-## Contributions
-
-1. **Problem identification** — why caching in agentic workflows differs from conventional caching: stale values can change which branch the agent takes, not just which number it returns.
-2. **Simulation infrastructure** — a reproducible end-to-end testbed with two structurally distinct financial workflows and a deterministic price-replay mechanism.
-3. **Empirical finding** — high-fanout nodes cause disproportionately more decision errors when stale; the `news_sentiment` branch of the investment-decision workflow shows a 7.3× higher mismatch rate than the `trend` branch under fixed TTL.
-4. **Workflow-aware TTL policy** — a formula that tightens TTLs based on `downstream_dependents` and `workflow_step`, reducing decision mismatches ~2× across two structurally different workflows while remaining 2.5× faster than no-cache.
 
 ---
 
@@ -104,13 +92,6 @@ A FastAPI server mimicking dynamic external tool APIs. Values change continuousl
 | `SIM_SENTIMENT_CHANGE_RATE` | `0.02` | ~1 sentiment change per 50s |
 | `SIM_TREND_CHANGE_RATE` | `0.001` | ~1 trend change per 15 min |
 | `SIM_ERROR_RATE` | `0.02` | 2% of requests return 503 |
-
-**Run it:**
-```bash
-cd api_simulator
-pip install -r requirements.txt
-python3 main.py
-```
 
 ---
 
@@ -176,19 +157,6 @@ A call with 3 downstream dependents at the root (step=0) receives `TTL = base_tt
 | `GW_WA_POSITION_WEIGHT` | `1.5` | (`workflow_aware`) Extra tightening for step-0 root nodes. Set to `1.0` to disable. |
 | `GW_WA_MIN_TTL_FRACTION` | `0.2` | (`workflow_aware`) Floor as a fraction of base TTL. |
 
-**Run it:**
-```bash
-cd cache_gateway
-pip install -r requirements.txt
-
-GW_POLICY=none python3 main.py          # no-cache baseline
-GW_POLICY=fixed_ttl python3 main.py     # standard baseline
-GW_POLICY=workflow_aware python3 main.py  # our contribution
-
-# Check TTL preview and hit metrics
-curl http://localhost:8002/metrics | python3 -m json.tool
-```
-
 ---
 
 ### 3. LangGraph Agent (`agent/`)
@@ -213,21 +181,6 @@ Each trial runs the workflow **twice**: once through the gateway (potentially st
 | `analyze.py` | Cross-policy comparison from CSV outputs. Produces tables and figures. |
 | `thresholds.py` | Routing/decision thresholds calibrated to make stale mismatches observable. |
 
-**Run it:**
-```bash
-cd agent
-pip install -r requirements.txt
-
-# Default: investment_decision, 100 trials
-python3 main.py
-
-# Portfolio rebalancing
-AGENT_WORKFLOW=portfolio_rebalancing AGENT_N_TRIALS=50 python3 main.py
-
-# Save results to CSV
-AGENT_OUTPUT_CSV=results/test.csv python3 main.py
-```
-
 ---
 
 ## Experimental Results
@@ -248,26 +201,6 @@ Hit rate and mismatch rate are **orthogonal** in agentic systems — a 97% hit r
 | `fixed_ttl` | 79.9% | **2.7%** | 79.3 ms |
 | `workflow_aware` | 49.6% | **1.2%** | 110.2 ms |
 
-**Key findings:**
-
-**1. 56% fewer decision errors** — workflow_aware cuts the mismatch rate from 2.7% → 1.2% while remaining 2.5× faster than no-cache.
-
-**2. Wrong-branch routing errors eliminated entirely.** Workflow_aware tightens the price TTL from 20s → 6.7s at the root node. Under fixed_ttl, 27.3% of mismatches are wrong-branch errors where a stale price routes the agent to the wrong branch and suppresses the correct downstream call. Workflow_aware reduces this to zero.
-
-| Mismatch type | `fixed_ttl` | `workflow_aware` |
-|---|---|---|
-| Wrong-branch (stale price → wrong routing) | 15/55 (27.3%) | **0/24 (0.0%)** |
-| Same-branch (stale leaf → wrong decision) | 40/55 (72.7%) | 24/24 (100%) |
-
-**3. Branch-level breakdown:**
-
-| Branch | `fixed_ttl` mismatch rate | `workflow_aware` mismatch rate |
-|---|---|---|
-| `news_sentiment` | 11.9% (26/219) | 0.5% (1/215) — **96% reduction** |
-| `trend` | 1.6% (29/1785) | 1.3% (23/1793) — **19% reduction** |
-
-The 7.3× disparity between branches under fixed_ttl is direct evidence that staleness impact depends on DAG position, not just change rate.
-
 ---
 
 ### Workflow 2: Portfolio Rebalancing (parallel fan-in)
@@ -279,14 +212,6 @@ The 7.3× disparity between branches under fixed_ttl is direct evidence that sta
 | `none` (baseline) | 0.0% | **0.3%** | 336.8 ms |
 | `fixed_ttl` | 97.1% | **6.5%** | 89.3 ms |
 | `workflow_aware` | 91.6% | **3.3%** | 110.9 ms |
-
-**Key findings:**
-
-**1. 50% fewer decision errors** — consistent with the investment_decision result despite a completely different DAG shape.
-
-**2. Fan-in amplification.** The 6.5% fixed_ttl error rate (vs. 2.7% for investment_decision) shows how stale prices from any of three independent nodes compound into errors in the single shared decision. Workflow_aware concentrates tightening on AAPL (3 deps) more than GOOG/NVDA (2 deps each), suppressing this amplification.
-
-**3. Hit rate ≠ correctness.** Fixed_ttl achieves 97.1% hit rate here yet produces the highest mismatch rate of any policy. A naive operator maximizing hit rate would select the worst configuration for correctness.
 
 ---
 
@@ -304,7 +229,7 @@ Fixed_ttl is 39% faster than workflow_aware but inflicts 2× more errors. Workfl
 
 ---
 
-### Setup
+## Setup
 
 Create the shared venv the experiment scripts rely on (run once after cloning):
 
@@ -316,7 +241,7 @@ cd ../cache_gateway && ../agent/venv/bin/pip install -r requirements.txt
 cd ../api_simulator && ../agent/venv/bin/pip install -r requirements.txt
 ```
 
-### How to Reproduce
+## How to Reproduce
 
 ```bash
 # 1. Start the simulator (keep running throughout)
@@ -348,8 +273,6 @@ For a faster test run:
 TARGET_ROWS=500 bash run_experiments.sh
 ```
 
----
-
 ## Running a Single Policy Manually
 
 ```bash
@@ -364,27 +287,6 @@ GW_POLICY=workflow_aware ./venv/bin/python3 main.py  # or: none, fixed_ttl
 cd agent
 AGENT_WORKFLOW=investment_decision AGENT_OUTPUT_CSV=results/test.csv ./venv/bin/python3 main.py
 ```
-
----
-
-## Discussion and Limitations
-
-Workflow-aware caching is most impactful for agents that repeatedly make sequential calls to dynamic external APIs — financial assistants querying live market data, travel planners fetching real-time weather, customer-support agents retrieving account details, and research agents pulling recent news.
-
-**Limitations:**
-
-- **Deterministic workflows.** Agents follow fixed decision rules rather than calling a real LLM. Real LLM agents introduce reasoning variability that could make staleness impact higher or lower than measured here.
-- **Heuristic formula.** The dependency factor and position weight are reasonable proxies for staleness impact but are not proven optimal for all workflow shapes or data sources.
-- **Static DAG assumption.** The policy requires the workflow DAG to be known at invocation time. Agents that generate plans dynamically cannot provide `downstream_dependents` without additional infrastructure.
-
----
-
-## Future Work
-
-- **Real LLM integration** — connect to an actual LLM (Claude, GPT-4) to observe how data staleness interacts with agentic reasoning and whether outdated context suppresses or compounds hallucinations.
-- **Adaptive TTL learning** — replace the hand-tuned formula with an online learner that observes live DAG traces, data volatility, and mismatch feedback to adjust TTLs automatically without manual intervention.
-- **Multi-agent cache sharing** — characterize how staleness propagates laterally across agents sharing a cache, and whether per-agent TTL policies are needed to prevent one agent's stale hit from corrupting another's correctness.
-- **Staleness budget formalization** — given a tolerable mismatch rate, allocate TTLs optimally across the DAG as a constrained optimization problem (LP or bandit methods).
 
 ---
 
