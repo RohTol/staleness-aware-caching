@@ -352,7 +352,7 @@ AGENT_WORKFLOW=investment_decision AGENT_OUTPUT_CSV=results/test.csv ./venv/bin/
 
 Workflow-aware caching is most impactful for agents that repeatedly make sequential calls to dynamic external APIs — financial assistants querying live market data, travel planners fetching real-time weather, customer-support agents retrieving account details, and research agents pulling recent news.
 
-**Limitations (from the paper):**
+**Limitations:**
 
 - **Deterministic workflows.** Agents follow fixed decision rules rather than calling a real LLM. Real LLM agents introduce reasoning variability that could make staleness impact higher or lower than measured here.
 - **Heuristic formula.** The dependency factor and position weight are reasonable proxies for staleness impact but are not proven optimal for all workflow shapes or data sources.
