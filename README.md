@@ -1,9 +1,7 @@
 # Staleness-Aware Caching for Agentic LLM Tool Calls
 
 **Archit Kumar · Maaz Hussain · Divya Pothavajhyula · Rohan Tolani**
-*Department of Computer Science and Engineering, University of Michigan*
 
-> Full paper: [`CSE_585_Final_Paper.pdf`](CSE_585_Final_Paper.pdf)
 
 ---
 
