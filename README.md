@@ -285,6 +285,18 @@ Fixed_ttl is 39% faster than workflow_aware but inflicts 2× more errors. Workfl
 
 ---
 
+### Setup
+
+Create the shared venv the experiment scripts rely on (run once after cloning):
+
+```bash
+cd agent
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
+cd ../cache_gateway && ../agent/venv/bin/pip install -r requirements.txt
+cd ../api_simulator && ../agent/venv/bin/pip install -r requirements.txt
+```
+
 ### How to Reproduce
 
 ```bash
@@ -297,18 +309,25 @@ cd .. && bash run_experiments.sh
 # 3. Portfolio rebalancing (AAPL/GOOG/NVDA, 3 policies)
 bash run_portfolio_experiments.sh
 
-# 4. Analyze
+# 4. Analyze (both scripts run this automatically at the end)
 cd agent
 ./venv/bin/python3 analyze.py results/results_none_v2.csv results/results_fixed_ttl_v2.csv results/results_workflow_aware_v2.csv
 ./venv/bin/python3 analyze.py results/port_none_v1.csv results/port_fixed_ttl_v1.csv results/port_workflow_aware_v1.csv
 ```
 
+Both scripts automatically start/stop the gateway per policy, call `/reset` between policies to replay the same price sequence, and run `analyze.py` when all three policies finish.
+
+**Script env vars:**
+
+| Variable | Script | Default | Effect |
+|---|---|---|---|
+| `TARGET_ROWS` | both | `2000` | Trials to collect per policy before moving to the next |
+| `SUFFIX` | `run_experiments.sh` | `v2` | Output filename suffix (`results_{policy}_{suffix}.csv`) |
+
 For a faster test run:
 ```bash
 TARGET_ROWS=500 bash run_experiments.sh
 ```
-
-The experiment scripts start/stop the gateway automatically per policy and call `/reset` between policies to replay the same price sequence.
 
 ---
 

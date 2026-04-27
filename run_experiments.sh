@@ -14,9 +14,10 @@ set -e
 TARGET_ROWS=${TARGET_ROWS:-2000}
 SUFFIX=${SUFFIX:-"v2"}
 
-PYTHON="/home/rohtol/cse585/agent/venv/bin/python3"
-GW_DIR="/home/rohtol/cse585/cache_gateway"
-AGENT_DIR="/home/rohtol/cse585/agent"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+PYTHON="$ROOT/agent/venv/bin/python3"
+GW_DIR="$ROOT/cache_gateway"
+AGENT_DIR="$ROOT/agent"
 
 GW_PID=""
 AGENT_PID=""
